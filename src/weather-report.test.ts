@@ -1,54 +1,59 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { airLevel, cachedReport, formatReport, parseReport, skyWord, uvLevel } from './weather-report.ts';
+import { cachedReport, formatReport, parseReport, sky } from './weather-report.ts';
 import type { FetchFn } from './weather.ts';
 
 const DAYS = ['2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24']; // Sat..Tue
 
-function forecastBody(uv = 6) {
-  const time = Array.from({ length: 24 }, (_, h) => `${DAYS[0]}T${String(h).padStart(2, '0')}:00`);
-  // morning 10%, afternoon 40%, night 70%
-  const probs = time.map((_, h) => (h < 12 ? 10 : h < 18 ? 40 : 70));
+function forecastBody({ rain = 10, uv = 6, max = 28, feels = 25.2 } = {}) {
   return {
-    current: { temperature_2m: 27.4, apparent_temperature: 29.2, weather_code: 3 },
-    hourly: { time, precipitation_probability: probs },
+    current: { temperature_2m: 22.4, apparent_temperature: feels, weather_code: 2 },
     daily: {
       time: DAYS,
-      weather_code: [3, 0, 63, 3],
-      temperature_2m_max: [33.2, 34, 30, 32],
-      temperature_2m_min: [21, 22, 22, 21],
-      precipitation_probability_max: [70, 10, 80, 30],
-      uv_index_clear_sky_max: [uv, 9, 5, 7],
+      weather_code: [2, 3, 3, 53],
+      temperature_2m_max: [max, 28, 30, 30],
+      precipitation_probability_max: [rain, 25, 10, 70],
+      uv_index_clear_sky_max: [uv, 6, 6, 5],
     },
   };
 }
 
-test('report shows now, today, rain by part of day and the next 3 days', () => {
-  const text = formatReport(parseReport(forecastBody(), { current: { pm2_5: 20 } }));
-  assert.match(text, /အခု: 27°C \(ခံစားရ 29°C\) - တိမ်ထူ/);
-  assert.match(text, /33° \/ 21°/);
-  assert.match(text, /မနက် 10% \| နေ့လယ် 40% \| ည 70%/);
-  assert.match(text, /PM2\.5: 20 \(အသင့်အတင့်\)/);
-  assert.match(text, /တနင်္ဂနွေ: နေသာ, 34°\/22°, မိုး 10%/);
-  assert.match(text, /တနင်္လာ: မိုးရွာ, 30°\/22°, မိုး 80%/);
-  assert.equal(text.match(/^(စနေ|တနင်္ဂနွေ|တနင်္လာ|အင်္ဂါ):/gm)?.length, 3);
-  assert.doesNotMatch(text, /mask|ရှောင်ပါ/); // no advice on a mild day
+const report = (opts = {}, pm = 14) => formatReport(parseReport(forecastBody(opts), { current: { pm2_5: pm } }));
+
+test('a normal day: date title, plain words, laundry OK, no extra warnings', () => {
+  const lines = report().split('\n');
+  assert.equal(lines[0], 'ဒီနေ့ (စနေ၊ နိုဝင်ဘာ 21)');
+  assert.match(lines[1]!, /တိမ်အနည်းငယ်၊ မိုးမရွာနိုင်ဘူး$/);
+  assert.equal(lines[2], 'အခု 22° (ခံစားရ 25°)၊ နေ့လယ် 28° အထိ');
+  assert.match(lines[3]!, /အဝတ်လှန်းလို့ ရတယ်။$/);
+  assert.doesNotMatch(report(), /mask|ရှောင်ပါ|ရေ များများ|PM2|UV/);
 });
 
-test('strong sun and bad air add advice lines; failed air quality is just left out', () => {
-  const text = formatReport(parseReport(forecastBody(11), { current: { pm2_5: 80 } }));
-  assert.match(text, /ရှောင်ပါ/);
+test('coming days: weekday, sky, high, and an umbrella only on likely-rain days', () => {
+  const text = report();
+  assert.match(text, /လာမယ့်ရက်\nတနင်္ဂနွေ - .* တိမ်ထူ၊ 28°\nတနင်္လာ - .* တိမ်ထူ၊ 30°\nအင်္ဂါ - .* မိုးဖွဲ၊ 30° \u{2614}$/u);
+});
+
+test('rain changes the advice line', () => {
+  assert.match(report({ rain: 40 }), /မိုးရွာနိုင်တယ်\n.*\n.*ထီး ယူထားပါ/);
+  assert.match(report({ rain: 80 }), /မိုးရွာမယ်\n.*\n.*အဝတ် မလှန်းပါနဲ့/);
+});
+
+test('heat, strong sun and bad air add one line each, only when they matter', () => {
+  const text = report({ max: 39, uv: 9 }, 60);
+  assert.match(text, /ရေ များများ သောက်ပါ/);
+  assert.match(text, /အပြင် ရှောင်ပါ/);
   assert.match(text, /mask/);
-  assert.doesNotMatch(formatReport(parseReport(forecastBody(), null)), /PM2\.5/);
+  assert.doesNotMatch(formatReport(parseReport(forecastBody(), null)), /mask/); // air quality missing
 });
 
-test('bands and weather words', () => {
-  assert.equal(skyWord(0), 'နေသာ');
-  assert.equal(skyWord(95), 'မိုးကြိုးမုန်တိုင်း');
-  assert.equal(uvLevel(2), 'နည်း');
-  assert.equal(uvLevel(11), 'အန္တရာယ်ရှိ');
-  assert.equal(airLevel(10), 'ကောင်း');
-  assert.equal(airLevel(200), 'အလွန်မကောင်း');
+test('feels-like is shown only when it differs by 3 degrees or more', () => {
+  assert.doesNotMatch(report({ feels: 23 }), /ခံစားရ/);
+});
+
+test('weather codes get an emoji and Burmese words; source has no literal emoji', () => {
+  assert.equal(sky(0), '\u{2600}\u{FE0F} နေသာ');
+  assert.equal(sky(95), '\u{26C8}\u{FE0F} မိုးကြိုးမုန်တိုင်း');
 });
 
 test('malformed data throws (the button then shows a friendly message)', () => {
