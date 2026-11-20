@@ -25,10 +25,16 @@ export interface DayForecast {
   uv: number;
 }
 
+export interface RainPart {
+  name: string; // မနက် / နေ့လယ် / ည
+  chance: number; // max %, in this part of today
+}
+
 export interface WeatherReport {
   temp: number;
   feels: number;
   code: number;
+  rainParts: RainPart[]; // only the parts of today that are not over yet
   today: DayForecast;
   coming: DayForecast[];
   pm25: number | null; // null if the air quality service failed
@@ -46,6 +52,7 @@ const E = {
   umbrella: '\u{2614}',
   shirt: '\u{1F455}',
   glasses: '\u{1F576}\u{FE0F}',
+  wind: '\u{1F32C}\u{FE0F}',
   mask: '\u{1F637}',
   hot: '\u{1F975}',
 };
@@ -64,6 +71,9 @@ const W = {
   sun: `${E.glasses} နေ့လယ် နေပူ ပြင်းမယ်။ ၁၁ - ၃ နာရီ အပြင် ရှောင်ပါ။`,
   air: `${E.mask} လေထု မကောင်းဘူး။ အပြင်ထွက်ရင် mask တပ်ပါ။`,
   hot: `${E.hot} အရမ်းပူမယ်။ ရေ များများ သောက်ပါ။`,
+  rainWhen: (parts: string) => `${E.rain} ${parts} မှာ မိုးရွာနိုင်တယ်`,
+  sunAndAir: (uv: number, uvWord: string, air: string | null) =>
+    `${E.glasses} UV ${uv} (${uvWord})${air === null ? '' : ` | ${E.wind} လေထု ${air}`}`,
   comingTitle: 'လာမယ့်ရက်',
   day: (name: string, sky: string, max: number, umbrella: boolean) =>
     `${name} - ${sky}၊ ${max}°${umbrella ? ` ${E.umbrella}` : ''}`,
@@ -88,6 +98,45 @@ const rainWords = (chance: number) => (chance >= RAIN_LIKELY ? W.rainYes : chanc
 const rainAdvice = (chance: number) =>
   chance >= RAIN_LIKELY ? W.umbrellaYes : chance >= RAIN_POSSIBLE ? W.umbrellaMaybe : W.laundryOk;
 
+// WHO UV bands.
+export function uvWord(uv: number): string {
+  if (uv < 3) return 'နည်း';
+  if (uv < 6) return 'အသင့်အတင့်';
+  if (uv < 8) return 'ပြင်း';
+  if (uv < 11) return 'အလွန်ပြင်း';
+  return 'အန္တရာယ်ရှိ';
+}
+
+// US EPA PM2.5 bands (µg/m³), in words.
+export function airWord(pm: number): string {
+  if (pm <= 12) return 'ကောင်း';
+  if (pm <= 35.4) return 'အသင့်အတင့်';
+  if (pm <= 150.4) return 'မကောင်း';
+  return 'အလွန်မကောင်း';
+}
+
+const PARTS = [
+  { name: 'မနက်', from: 6, to: 12 },
+  { name: 'နေ့လယ်', from: 12, to: 18 },
+  { name: 'ည', from: 18, to: 24 },
+];
+
+// Highest rain chance per part of today, for the parts that have not ended yet.
+// Open-Meteo times are local "YYYY-MM-DDTHH:MM" strings (timezone=Asia/Yangon).
+function parseRainParts(hourly: Record<string, unknown>, today: string, nowHour: number): RainPart[] {
+  const times = arr(hourly.time, 'hourly.time');
+  const probs = arr(hourly.precipitation_probability, 'precipitation_probability');
+  return PARTS.filter((p) => p.to > nowHour).flatMap((p) => {
+    const chances = times.flatMap((t, i) => {
+      const chance = probs[i];
+      if (typeof t !== 'string' || !t.startsWith(today) || !isNum(chance)) return [];
+      const hour = Number(t.slice(11, 13));
+      return hour >= p.from && hour < p.to ? [chance] : [];
+    });
+    return chances.length > 0 ? [{ name: p.name, chance: Math.max(...chances) }] : [];
+  });
+}
+
 function parseDays(daily: Record<string, unknown>): DayForecast[] {
   const codes = arr(daily.weather_code, 'weather_code');
   const maxes = arr(daily.temperature_2m_max, 'temperature_2m_max');
@@ -103,18 +152,22 @@ function parseDays(daily: Record<string, unknown>): DayForecast[] {
 
 // Throws on a wrong overall shape; the caller turns that into a friendly message.
 export function parseReport(forecast: unknown, air: unknown): WeatherReport {
-  if (!isObj(forecast) || !isObj(forecast.current) || !isObj(forecast.daily)) throw new Error('Unexpected forecast shape');
-  const { current, daily } = forecast;
+  if (!isObj(forecast) || !isObj(forecast.current) || !isObj(forecast.hourly) || !isObj(forecast.daily)) {
+    throw new Error('Unexpected forecast shape');
+  }
+  const { current, hourly, daily } = forecast;
   if (!isNum(current.temperature_2m) || !isNum(current.apparent_temperature) || !isNum(current.weather_code)) {
     throw new Error('Unexpected current weather');
   }
   const [today, ...rest] = parseDays(daily);
   if (!today) throw new Error('No daily forecast');
   const pm = isObj(air) && isObj(air.current) ? air.current.pm2_5 : null;
+  const nowHour = typeof current.time === 'string' ? Number(current.time.slice(11, 13)) : 0;
   return {
     temp: Math.round(current.temperature_2m),
     feels: Math.round(current.apparent_temperature),
     code: current.weather_code,
+    rainParts: parseRainParts(hourly, today.date, Number.isFinite(nowHour) ? nowHour : 0),
     today,
     coming: rest.slice(0, COMING_DAYS),
     pm25: isNum(pm) ? Math.round(pm) : null,
@@ -132,10 +185,13 @@ export function formatReport(r: WeatherReport): string {
     ...(r.today.uv >= SUN_ADVICE_UV ? [W.sun] : []),
     ...(r.pm25 !== null && r.pm25 >= AIR_ADVICE_PM ? [W.air] : []),
   ];
+  const wetParts = r.rainParts.filter((p) => p.chance >= RAIN_POSSIBLE).map((p) => p.name);
   return [
     W.title(weekdayOf(r.today.date), S.months[d.getUTCMonth()]!, d.getUTCDate()),
     `${sky(r.code)}၊ ${rainWords(r.today.rain)}`,
     W.now(r.temp, feels, r.today.max),
+    ...(wetParts.length > 0 ? [W.rainWhen(wetParts.join('၊ '))] : []),
+    W.sunAndAir(r.today.uv, uvWord(r.today.uv), r.pm25 === null ? null : airWord(r.pm25)),
     rainAdvice(r.today.rain),
     ...extras,
     '',
@@ -149,6 +205,7 @@ export async function fetchReport(home: Home, fetchFn: FetchFn): Promise<Weather
   const forecastParams = new URLSearchParams({
     ...location,
     current: 'temperature_2m,apparent_temperature,weather_code',
+    hourly: 'precipitation_probability',
     // Clear-sky UV: the strongest the sun can get that day. The cloud-adjusted value was seen
     // reporting 1.4 on a day whose clear-sky max was 6, and under-warning is the worse mistake.
     daily: 'weather_code,temperature_2m_max,precipitation_probability_max,uv_index_clear_sky_max',

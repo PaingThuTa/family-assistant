@@ -9,7 +9,7 @@ The bot nudges each person until the task is done. Everyone can see the family's
 **Telegram bot**
 - **နောက်ဘာလဲ? (What's next?):** one tap shows unfinished late tasks and the next task, with a Done button.
 - **မှတ်စု (Notes):** opens the family notes in the Mini App.
-- **ရာသီဥတု (Weather):** a short message in plain words with weather emojis: today's date, sky and rain in words, the temperature now and the day's high, and what to do (hang the laundry or take an umbrella). Heat, strong sun and bad air (PM2.5) get a line only on days they matter. Ends with the next 3 days. Cached for 15 minutes.
+- **ရာသီဥတု (Weather):** a short message in plain words with weather emojis: today's date, sky and rain in words, the temperature now and the day's high, a UV and air-quality (PM2.5) line, which parts of the day may get rain, and what to do (hang the laundry or take an umbrella). Heat, strong sun and bad air get an extra advice line on days they matter. Ends with the next 3 days. Cached for 15 minutes.
 - **Pings with a Done button.** Important tasks repeat every 5 minutes until Done (up to 6 times).
 - **Heads-up 10 minutes before** each scheduled reminder.
 - **Admin alert:** if an important task gets every ping and no Done, the admin is told.
