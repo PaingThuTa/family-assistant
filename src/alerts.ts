@@ -3,13 +3,13 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Ctx } from './bot.ts';
 import type { PingApi } from './scheduler.ts';
 import { formatTime, yangonParts } from './time.ts';
+import { fetchReport, formatReport } from './weather-report.ts';
 import {
   distanceKm,
   fetchForecast,
   fetchQuakes,
   nearbyRecentQuakes,
   rainSoon,
-  todaySummary,
   type FetchFn,
   type Home,
 } from './weather.ts';
@@ -22,6 +22,7 @@ const QUAKE_INTERVAL_MS = 2 * 60_000;
 const DAILY_HOUR = 7;
 const QUIET_FROM_HOUR = 21;
 const QUIET_TO_HOUR = 6;
+const KEEP_SENT_MS = 30 * 24 * 60 * 60_000; // de-dup keys older than this are useless
 
 // Burmese alert text. Review the wording with Mom.
 const A = {
@@ -36,9 +37,6 @@ const A = {
   off: 'ပိတ်ထား',
   command: 'ရာသီဥတု နဲ့ ငလျင် သတိပေးချက်',
   rain: 'မကြာခင် မိုးရွာမယ်။ အဝတ်လှန်းထားရင် ရုတ်ထားပါ။ အပြင်ထွက်ရင် ထီး ယူသွားပါ။',
-  daily: (maxTemp: number, rainChance: number) =>
-    `ဒီနေ့ ရာသီဥတု\nအပူဆုံး: ${maxTemp}°C\nမိုးရွာနိုင်ခြေ: ${rainChance}%`,
-  heat: 'အရမ်းပူမယ်။ ရေ များများ သောက်ပါ။ နေပူထဲ မထွက်ပါနဲ့။',
   quake: (magnitude: string, km: number, place: string, time: string) =>
     `ငလျင် လှုပ်ခဲ့ပါတယ် (ဖြစ်ပြီးသား သတင်းပါ)\nအား: ${magnitude}\nအကွာအဝေး: ${km} km\nနေရာ: ${place}\nအချိန်: ${time}`,
 } as const;
@@ -94,6 +92,14 @@ export function markSent(db: DatabaseSync, key: string, now: number): void {
   db.prepare('INSERT OR IGNORE INTO sent_alerts (key, sent_at) VALUES (?, ?)').run(key, now);
 }
 
+const pruneSent = (db: DatabaseSync, now: number) =>
+  db.prepare('DELETE FROM sent_alerts WHERE sent_at < ?').run(now - KEEP_SENT_MS);
+
+const hasSubscribers = (db: DatabaseSync, kind: AlertKind) => listSubscribers(db, kind).length > 0;
+
+// At most one rain alert per part of the day (morning / afternoon / evening).
+const dayPart = (hour: number) => (hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening');
+
 function alertKeyboard(db: DatabaseSync, memberId: number): InlineKeyboard {
   const on = listSubscriptions(db, memberId);
   return ALERT_KINDS.reduce(
@@ -138,28 +144,31 @@ export async function runWeatherPass(
   now: number,
   fetchFn: FetchFn,
 ): Promise<void> {
+  pruneSent(db, now);
   const { date, time } = yangonParts(now);
   const hour = Number(time.slice(0, 2));
   // ponytail: daily also waits for daytime, so a late-night restart does not send "today" at 23:00.
   const quiet = hour >= QUIET_FROM_HOUR || hour < QUIET_TO_HOUR;
-  const rainKey = `rain:${date}:${Math.floor(hour / 3)}`;
+  const rainKey = `rain:${date}:${dayPart(hour)}`;
   const dailyKey = `daily:${date}`;
-  const wantRain = !quiet && !wasSent(db, rainKey);
-  const wantDaily = !quiet && hour >= DAILY_HOUR && !wasSent(db, dailyKey);
-  if (!wantRain && !wantDaily) return;
+  // Nothing is fetched for an alert nobody has turned on.
+  const wantRain = !quiet && hasSubscribers(db, 'rain') && !wasSent(db, rainKey);
+  const wantDaily = !quiet && hour >= DAILY_HOUR && hasSubscribers(db, 'daily') && !wasSent(db, dailyKey);
 
-  let forecast;
-  try {
-    forecast = await fetchForecast(home, fetchFn);
-  } catch (err: unknown) {
-    console.error('Weather fetch failed', err);
-    return;
+  if (wantRain) {
+    try {
+      if (rainSoon(await fetchForecast(home, fetchFn), now)) await broadcast(db, api, 'rain', rainKey, A.rain, now);
+    } catch (err: unknown) {
+      console.error('Weather fetch failed', err);
+    }
   }
-  if (wantRain && rainSoon(forecast, now)) await broadcast(db, api, 'rain', rainKey, A.rain, now);
-  const summary = wantDaily ? todaySummary(forecast, now) : null;
-  if (summary) {
-    const text = [A.daily(summary.maxTemp, summary.rainChance), ...(summary.heat ? [A.heat] : [])].join('\n');
-    await broadcast(db, api, 'daily', dailyKey, text, now);
+  // The daily alert is the same report as the Weather button.
+  if (wantDaily) {
+    try {
+      await broadcast(db, api, 'daily', dailyKey, formatReport(await fetchReport(home, fetchFn)), now);
+    } catch (err: unknown) {
+      console.error('Daily weather report failed', err);
+    }
   }
 }
 
@@ -170,6 +179,7 @@ export async function runQuakePass(
   now: number,
   fetchFn: FetchFn,
 ): Promise<void> {
+  if (!hasSubscribers(db, 'quake')) return;
   let quakes;
   try {
     quakes = await fetchQuakes(fetchFn);

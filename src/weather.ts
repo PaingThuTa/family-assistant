@@ -1,10 +1,9 @@
-import { parseYangonDateTime, yangonParts } from './time.ts';
+import { parseYangonDateTime } from './time.ts';
 
 export type Home = { lat: number; lon: number };
 export type FetchFn = typeof fetch;
 export type HourSlot = { at: number; probability: number; precipitation: number };
-export type DaySummary = { date: string; maxTemp: number; maxProbability: number };
-export type Forecast = { hours: HourSlot[]; days: DaySummary[] };
+export type Forecast = { hours: HourSlot[] };
 export type Quake = { id: string; magnitude: number; place: string; timeMs: number; lat: number; lon: number };
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -15,10 +14,10 @@ const RAIN_WINDOW_MS = 2 * 60 * 60_000;
 const SLOT_MS = 60 * 60_000; // Open-Meteo hourly slots
 const RAIN_MIN_PROBABILITY = 70;
 const RAIN_MIN_MM = 0.5;
-const HEAT_MIN_C = 40;
 const QUAKE_MIN_MAGNITUDE = 4.5;
 const QUAKE_MAX_KM = 300;
-const QUAKE_MAX_AGE_MS = 60 * 60_000;
+// USGS can take over an hour to publish quakes outside the US; sent_alerts stops repeats.
+const QUAKE_MAX_AGE_MS = 6 * 60 * 60_000;
 const EARTH_RADIUS_KM = 6371;
 
 // API data is untrusted: every field is checked before use.
@@ -45,8 +44,8 @@ function parseLocal(value: unknown): number | null {
 
 // Throws if the overall shape is wrong; individual bad slots (e.g. null values) are skipped.
 function parseForecast(data: unknown): Forecast {
-  if (!isObj(data) || !isObj(data.hourly) || !isObj(data.daily)) throw new Error('Unexpected forecast shape');
-  const { hourly, daily } = data;
+  if (!isObj(data) || !isObj(data.hourly)) throw new Error('Unexpected forecast shape');
+  const { hourly } = data;
   const probs = arr(hourly.precipitation_probability, 'precipitation_probability');
   const mm = arr(hourly.precipitation, 'precipitation');
   const hours = arr(hourly.time, 'hourly.time').flatMap((t, i) => {
@@ -55,15 +54,7 @@ function parseForecast(data: unknown): Forecast {
     const precipitation = mm[i];
     return at !== null && isNum(probability) && isNum(precipitation) ? [{ at, probability, precipitation }] : [];
   });
-  const temps = arr(daily.temperature_2m_max, 'temperature_2m_max');
-  const dayProbs = arr(daily.precipitation_probability_max, 'precipitation_probability_max');
-  const days = arr(daily.time, 'daily.time').flatMap((date, i) => {
-    const maxTemp = temps[i];
-    const maxProbability = dayProbs[i];
-    const ok = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && isNum(maxTemp) && isNum(maxProbability);
-    return ok ? [{ date, maxTemp, maxProbability }] : [];
-  });
-  return { hours, days };
+  return { hours };
 }
 
 export async function fetchForecast(home: Home, fetchFn: FetchFn): Promise<Forecast> {
@@ -71,7 +62,6 @@ export async function fetchForecast(home: Home, fetchFn: FetchFn): Promise<Forec
     latitude: String(home.lat),
     longitude: String(home.lon),
     hourly: 'precipitation_probability,precipitation',
-    daily: 'temperature_2m_max,precipitation_probability_max',
     timezone: 'Asia/Yangon',
     forecast_days: '2',
   });
@@ -87,19 +77,6 @@ export const rainSoon = (forecast: Forecast, now: number): boolean =>
       h.probability >= RAIN_MIN_PROBABILITY &&
       h.precipitation >= RAIN_MIN_MM,
   );
-
-export function todaySummary(
-  forecast: Forecast,
-  now: number,
-): { maxTemp: number; rainChance: number; heat: boolean } | null {
-  const today = forecast.days.find((d) => d.date === yangonParts(now).date);
-  if (!today) return null;
-  return {
-    maxTemp: Math.round(today.maxTemp),
-    rainChance: Math.round(today.maxProbability),
-    heat: today.maxTemp >= HEAT_MIN_C,
-  };
-}
 
 // Malformed features are skipped, so one bad entry does not hide the rest.
 function parseQuake(f: unknown): Quake | null {
@@ -128,7 +105,7 @@ export function distanceKm(a: Home, b: Home): number {
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(h));
 }
 
-// Only quakes from the last hour, so a restart does not replay old ones.
+// Only recent quakes, so a fresh database does not report a whole day of old ones.
 export const nearbyRecentQuakes = (quakes: Quake[], home: Home, now: number): Quake[] =>
   quakes.filter(
     (q) =>

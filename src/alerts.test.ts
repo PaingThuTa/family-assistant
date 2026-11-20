@@ -4,9 +4,11 @@ import {
   initAlertTables,
   listSubscribers,
   listSubscriptions,
+  markSent,
   runQuakePass,
   runWeatherPass,
   toggleSubscription,
+  wasSent,
   type AlertKind,
 } from './alerts.ts';
 import { findMemberByTelegramId, openDb, syncMembers } from './db.ts';
@@ -21,12 +23,20 @@ const NOW = at(DAY, '10:00');
 
 const fakeFetch = (body: unknown): FetchFn => (async () => new Response(JSON.stringify(body))) as unknown as FetchFn;
 
-// Open-Meteo shaped body: every hour of DAY with the same rain values.
+// Open-Meteo shaped body: every hour of DAY with the same rain values. It has the fields of both
+// requests (rain check and the daily report), so one fake serves both.
 function forecastBody(probability: number, mm: number, maxTemp = 33) {
   const time = Array.from({ length: 24 }, (_, h) => `${DAY}T${String(h).padStart(2, '0')}:00`);
   return {
+    current: { time: `${DAY}T07:00`, temperature_2m: 25, apparent_temperature: 26, weather_code: 1 },
     hourly: { time, precipitation_probability: time.map(() => probability), precipitation: time.map(() => mm) },
-    daily: { time: [DAY], temperature_2m_max: [maxTemp], precipitation_probability_max: [probability] },
+    daily: {
+      time: [DAY],
+      weather_code: [1],
+      temperature_2m_max: [maxTemp],
+      precipitation_probability_max: [probability],
+      uv_index_clear_sky_max: [6],
+    },
   };
 }
 
@@ -72,18 +82,21 @@ test('rain alerts are silent during quiet hours', async () => {
   assert.equal(sent.length, 0);
 });
 
-test('rain is sent once per 3-hour block', async () => {
+test('rain is sent at most once per part of the day', async () => {
   const { db, api, sent } = setup(['rain']);
   const fetchFn = fakeFetch(forecastBody(90, 3));
   await runWeatherPass(db, api, HOME, at(DAY, '10:00'), fetchFn);
   await runWeatherPass(db, api, HOME, at(DAY, '10:15'), fetchFn);
   await runWeatherPass(db, api, HOME, at(DAY, '11:45'), fetchFn);
   assert.equal(sent.length, 1);
-  await runWeatherPass(db, api, HOME, at(DAY, '12:00'), fetchFn); // next block
+  await runWeatherPass(db, api, HOME, at(DAY, '12:00'), fetchFn); // afternoon
+  await runWeatherPass(db, api, HOME, at(DAY, '15:00'), fetchFn);
   assert.equal(sent.length, 2);
+  await runWeatherPass(db, api, HOME, at(DAY, '18:00'), fetchFn); // evening
+  assert.equal(sent.length, 3);
 });
 
-test('daily summary is sent once, from 07:00, with a heat line when 40 or more', async () => {
+test('daily alert is the full weather report, sent once, from 07:00', async () => {
   const { db, api, sent } = setup(['daily']);
   const fetchFn = fakeFetch(forecastBody(10, 0, 40.6));
   await runWeatherPass(db, api, HOME, at(DAY, '06:45'), fetchFn);
@@ -91,11 +104,12 @@ test('daily summary is sent once, from 07:00, with a heat line when 40 or more',
   await runWeatherPass(db, api, HOME, at(DAY, '07:00'), fetchFn);
   await runWeatherPass(db, api, HOME, at(DAY, '07:15'), fetchFn);
   assert.equal(sent.length, 1);
-  assert.match(sent[0]![1], /41°C/);
+  assert.match(sent[0]![1], /^ဒီနေ့ \(/); // same report as the Weather button
+  assert.match(sent[0]![1], /41° အထိ/);
   assert.match(sent[0]![1], /အရမ်းပူမယ်/);
 });
 
-test('daily summary has no heat line on a normal day', async () => {
+test('daily report has no heat line on a normal day', async () => {
   const { db, api, sent } = setup(['daily']);
   await runWeatherPass(db, api, HOME, at(DAY, '08:00'), fakeFetch(forecastBody(10, 0, 35)));
   assert.equal(sent.length, 1);
@@ -122,11 +136,12 @@ test('nearbyRecentQuakes filters by distance, magnitude and age', () => {
     quake({ id: 'near' }),
     quake({ id: 'far', lat: 35.7, lon: 139.7 }), // Tokyo
     quake({ id: 'small', magnitude: 4.4 }),
-    quake({ id: 'old', timeMs: NOW - 2 * 60 * 60_000 }),
+    quake({ id: 'slow feed', timeMs: NOW - 2 * 60 * 60_000 }), // USGS can publish late
+    quake({ id: 'old', timeMs: NOW - 7 * 60 * 60_000 }),
   ];
   assert.deepEqual(
     nearbyRecentQuakes(quakes, HOME, NOW).map((q) => q.id),
-    ['near'],
+    ['near', 'slow feed'],
   );
 });
 
@@ -162,12 +177,16 @@ test('toggling subscriptions; only subscribers get messages', async () => {
   assert.deepEqual(listSubscribers(db, 'rain'), []);
 });
 
-test('an alert with no subscribers is still marked sent', async () => {
-  const { db, api, sent, mom } = setup([]);
-  const fetchFn = fakeFetch(forecastBody(90, 3));
-  await runWeatherPass(db, api, HOME, NOW, fetchFn);
-  toggleSubscription(db, mom.id, 'rain');
-  await runWeatherPass(db, api, HOME, NOW + 15 * 60_000, fetchFn);
+test('nothing is fetched when nobody is subscribed', async () => {
+  const { db, api, sent } = setup([]);
+  let calls = 0;
+  const fetchFn = (async () => {
+    calls++;
+    return new Response(JSON.stringify(forecastBody(90, 3)));
+  }) as unknown as FetchFn;
+  await runWeatherPass(db, api, HOME, at(DAY, '08:00'), fetchFn);
+  await runQuakePass(db, api, HOME, NOW, fetchFn);
+  assert.equal(calls, 0);
   assert.equal(sent.length, 0);
 });
 
@@ -206,4 +225,13 @@ test('fetchQuakes skips malformed features and keeps good ones', async () => {
     quakes.map((q) => [q.id, q.lat, q.lon]),
     [['good', 17.3, 96.5]],
   );
+});
+
+test('alert records older than 30 days are pruned', async () => {
+  const { db, api } = setup([]);
+  markSent(db, 'quake:ancient', NOW - 31 * 24 * 60 * 60_000);
+  markSent(db, 'quake:recent', NOW - 60_000);
+  await runWeatherPass(db, api, HOME, NOW, fakeFetch(forecastBody(0, 0)));
+  assert.equal(wasSent(db, 'quake:ancient'), false);
+  assert.equal(wasSent(db, 'quake:recent'), true);
 });

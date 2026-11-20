@@ -445,8 +445,13 @@ function wireEvents() {
     } catch (err) {
       return showMessage(err.message);
     }
-    if (state.view === 'notes') loadNotes();
-    else load();
+    if (state.view === 'notes') {
+      // Reloading redraws the notes, which would wipe a line someone is still typing.
+      const typing = [...$('notes').querySelectorAll('.add-line input')].some((i) => i.value.trim());
+      if (!typing) loadNotes();
+    } else {
+      load();
+    }
   });
 }
 

@@ -87,7 +87,8 @@ if (webAppUrl.startsWith('https://')) {
 }
 
 try {
-  await bot.api.setMyCommands(ALERT_COMMANDS); // shows /alerts in Telegram's command list
+  // This replaces the whole command menu, so /start must be listed too.
+  await bot.api.setMyCommands([{ command: 'start', description: S.startCommand }, ...ALERT_COMMANDS]);
 } catch (err: unknown) {
   console.error('Could not set bot commands', err);
 }

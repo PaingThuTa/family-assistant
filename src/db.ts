@@ -153,12 +153,17 @@ export function createItem(db: DatabaseSync, item: NewItem, now = Date.now()): n
   return Number(result.lastInsertRowid);
 }
 
-// A member's unfinished items, earliest first (late ones included).
-export function listOpenItems(db: DatabaseSync, ownerId: number, limit = 10): Item[] {
-  return db
-    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' ORDER BY due_at LIMIT ?`)
-    .all(ownerId, limit)
+// For "What's next?": a few unfinished late items (oldest first) and the next upcoming one.
+// Two queries, so many late items can never hide the next one.
+export function findWhatsNext(db: DatabaseSync, ownerId: number, now: number, lateLimit: number): { late: Item[]; next: Item | undefined } {
+  const late = db
+    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT ?`)
+    .all(ownerId, now, lateLimit)
     .map(toItem);
+  const next = db
+    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at > ? ORDER BY due_at LIMIT 1`)
+    .get(ownerId, now);
+  return { late, next: next ? toItem(next) : undefined };
 }
 
 export function findItem(db: DatabaseSync, id: number): Item | undefined {

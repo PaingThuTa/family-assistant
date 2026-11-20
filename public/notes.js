@@ -39,10 +39,17 @@ function addLineForm(note, actions) {
     'form',
     {
       className: 'add-line',
-      onsubmit: (e) => {
+      onsubmit: async (e) => {
         e.preventDefault();
+        const form = e.currentTarget;
         const text = input.value.trim();
-        if (text) actions.onAddLine(note.id, text);
+        if (!text || form.dataset.busy) return; // a quick double Enter adds the line once
+        form.dataset.busy = '1';
+        try {
+          await actions.onAddLine(note.id, text);
+        } finally {
+          delete form.dataset.busy;
+        }
       },
     },
     [input, el('button', { type: 'submit', textContent: '+', ariaLabel: T.addLine })],

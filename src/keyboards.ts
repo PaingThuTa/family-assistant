@@ -7,5 +7,8 @@ export const mainKeyboard = () =>
 export const doneKeyboard = (itemId: number) => new InlineKeyboard().text(S.done, `done:${itemId}`);
 
 // Inline web_app buttons (unlike reply-keyboard ones) give the Mini App signed initData.
-export const openNotesKeyboard = (webAppUrl: string) =>
-  new InlineKeyboard().webApp(S.openNotes, `${webAppUrl}?view=notes`);
+export function openNotesKeyboard(webAppUrl: string): InlineKeyboard {
+  const url = new URL(webAppUrl); // safe even if the URL already has a query string
+  url.searchParams.set('view', 'notes');
+  return new InlineKeyboard().webApp(S.openNotes, url.toString());
+}

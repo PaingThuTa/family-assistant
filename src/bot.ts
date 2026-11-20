@@ -1,6 +1,6 @@
 import { Bot, type Context } from 'grammy';
 import type { DatabaseSync } from 'node:sqlite';
-import { findItem, findMemberByTelegramId, listOpenItems, markDone, type Item, type Member } from './db.ts';
+import { findItem, findMemberByTelegramId, findWhatsNext, markDone, type Item, type Member } from './db.ts';
 import { doneKeyboard, mainKeyboard, openNotesKeyboard } from './keyboards.ts';
 import { S } from './strings.ts';
 import { formatWhen } from './time.ts';
@@ -10,9 +10,7 @@ export type Ctx = Context & { member: Member };
 const MAX_LATE_SHOWN = 3;
 
 // "What's next?": unfinished late tasks first (a few), then the next upcoming one.
-export function nextReply(items: Item[], now: number): { text: string; nextId: number | null } {
-  const late = items.filter((i) => i.dueAt <= now).slice(0, MAX_LATE_SHOWN);
-  const next = items.find((i) => i.dueAt > now);
+export function nextReply(late: Item[], next: Item | undefined, now: number): { text: string; nextId: number | null } {
   const lines = [
     ...(late.length > 0 ? [S.lateHeader, ...late.map((i) => `• ${i.title} (${formatWhen(i.dueAt, now)})`), ''] : []),
     next ? S.next(next.title, formatWhen(next.dueAt, now)) : S.nothingNext,
@@ -49,7 +47,9 @@ export function createBot(token: string, db: DatabaseSync, webAppUrl: string | n
   bot.command('start', (ctx) => ctx.reply(S.welcome, { reply_markup: mainKeyboard() }));
 
   bot.hears(S.nextButton, async (ctx) => {
-    const { text, nextId } = nextReply(listOpenItems(db, ctx.member.id), Date.now());
+    const now = Date.now();
+    const { late, next } = findWhatsNext(db, ctx.member.id, now, MAX_LATE_SHOWN);
+    const { text, nextId } = nextReply(late, next, now);
     await ctx.reply(text, nextId === null ? {} : { reply_markup: doneKeyboard(nextId) });
   });
 
