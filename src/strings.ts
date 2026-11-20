@@ -2,6 +2,7 @@
 export const S = {
   nextButton: 'နောက်ဘာလဲ?',
   notesButton: 'မှတ်စု',
+  weatherButton: 'ရာသီဥတု',
   welcome: 'မင်္ဂလာပါ။ အောက်က ခလုတ်တွေကို နှိပ်ပြီး သုံးပါ။\nရာသီဥတု နဲ့ ငလျင် သတိပေးချက် လိုချင်ရင် /alerts ကို နှိပ်ပါ။',
   notMember: (telegramId: number) =>
     `ဒီဘော့ကို မိသားစုဝင်များသာ သုံးနိုင်ပါသည်။\nID: ${telegramId}`,

@@ -22,15 +22,15 @@ const QUAKE_MAX_AGE_MS = 60 * 60_000;
 const EARTH_RADIUS_KM = 6371;
 
 // API data is untrusted: every field is checked before use.
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
-const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+export const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+export const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
-function arr(v: unknown, name: string): unknown[] {
+export function arr(v: unknown, name: string): unknown[] {
   if (!Array.isArray(v)) throw new Error(`Forecast field ${name} is not an array`);
   return v;
 }
 
-async function getJson(url: string, fetchFn: FetchFn): Promise<unknown> {
+export async function getJson(url: string, fetchFn: FetchFn): Promise<unknown> {
   const res = await fetchFn(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
   return res.json();

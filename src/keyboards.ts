@@ -1,7 +1,8 @@
 import { InlineKeyboard, Keyboard } from 'grammy';
 import { S } from './strings.ts';
 
-export const mainKeyboard = () => new Keyboard().text(S.nextButton).text(S.notesButton).resized().persistent();
+export const mainKeyboard = () =>
+  new Keyboard().text(S.nextButton).text(S.notesButton).row().text(S.weatherButton).resized().persistent();
 
 export const doneKeyboard = (itemId: number) => new InlineKeyboard().text(S.done, `done:${itemId}`);
 

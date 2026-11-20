@@ -7,6 +7,7 @@ import { openDb, syncMembers, type MemberConfig, type Role } from './db.ts';
 import { startScheduler } from './scheduler.ts';
 import { S } from './strings.ts';
 import type { Home } from './weather.ts';
+import { registerWeatherButton } from './weather-report.ts';
 
 const SCHEDULER = { intervalMs: 30_000, repeatMs: 5 * 60_000, maxPings: 6 };
 
@@ -59,12 +60,14 @@ mkdirSync(dirname(dbPath), { recursive: true });
 const db = openDb(dbPath);
 syncMembers(db, readMembers());
 initAlertTables(db);
+const home = readHome();
 
 const bot = createBot(token, db, webAppUrl.startsWith('https://') ? webAppUrl : null);
-registerAlertCommands(bot, db); // must come before finishBot's catch-all
+// Feature handlers must come before finishBot's catch-all.
+registerAlertCommands(bot, db);
+registerWeatherButton(bot, home);
 finishBot(bot);
 const stopScheduler = startScheduler(db, bot.api, SCHEDULER);
-const home = readHome();
 const stopAlerts = home ? startAlerts(db, bot.api, home) : () => {};
 
 const server = createApiServer(db, token, resolve(import.meta.dirname, '..', 'public'));

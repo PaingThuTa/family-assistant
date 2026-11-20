@@ -9,6 +9,7 @@ The bot nudges each person until the task is done. Everyone can see the family's
 **Telegram bot**
 - **နောက်ဘာလဲ? (What's next?):** one tap shows unfinished late tasks and the next task, with a Done button.
 - **မှတ်စု (Notes):** opens the family notes in the Mini App.
+- **ရာသီဥတု (Weather):** now and feels-like temperature, today's high and low, rain chance for morning, afternoon and night, UV, air quality (PM2.5) with simple advice, and the next 3 days. Cached for 15 minutes.
 - **Pings with a Done button.** Important tasks repeat every 5 minutes until Done (up to 6 times).
 - **Heads-up 10 minutes before** each scheduled reminder.
 - **Admin alert:** if an important task gets every ping and no Done, the admin is told.
@@ -97,6 +98,7 @@ src/
   scheduler.ts    sends heads-up, on-time and repeat pings, and admin alerts
   alerts.ts       /alerts subscriptions; rain, daily weather and earthquake passes
   weather.ts      Open-Meteo and USGS fetchers and alert rules
+  weather-report.ts  the Weather button's report (forecast + air quality)
   api.ts          Mini App HTTP server and task API
   notes-api.ts    notes API (shared and private notes)
   notes-db.ts     notes queries
