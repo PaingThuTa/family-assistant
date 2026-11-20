@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { verifyInitData } from './auth.ts';
+import { HttpError, readJson } from './http.ts';
+import { routeNotes } from './notes-api.ts';
 import {
   createItem,
   deleteItem,
@@ -21,7 +23,6 @@ import { earlyPingFor } from './scheduler.ts';
 import { S } from './strings.ts';
 import { formatDay, formatTime, parseYangonDateTime, yangonDateString, yangonParts, yangonTime } from './time.ts';
 
-const MAX_BODY_BYTES = 10_000;
 const MAX_TITLE = 200;
 // [first day, day after last] as offsets from today.
 const RANGES = { today: [0, 1], tomorrow: [1, 2], week: [0, 7] } as const;
@@ -32,12 +33,13 @@ const STATIC: Record<string, { file: string; type: string }> = {
   '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
   '/dom.js': { file: 'dom.js', type: 'text/javascript; charset=utf-8' },
   '/calendar.js': { file: 'calendar.js', type: 'text/javascript; charset=utf-8' },
+  '/notes.js': { file: 'notes.js', type: 'text/javascript; charset=utf-8' },
   '/style.css': { file: 'style.css', type: 'text/css; charset=utf-8' },
 };
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:",
 };
 
 interface ApiResponse<T> {
@@ -54,14 +56,6 @@ interface ItemFields {
 }
 
 type NewItemInput = ItemFields & { ownerId: number };
-
-class HttpError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
 
 const canEdit = (me: Member, ownerId: number) => me.role === 'admin' || me.id === ownerId;
 
@@ -86,21 +80,6 @@ const publicItem = (item: Item, me: Member, now: number) => ({
 function sendJson<T>(res: ServerResponse, status: number, body: ApiResponse<T>): void {
   res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, S.web.error);
-    chunks.push(chunk as Buffer);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw new HttpError(400, S.web.error);
-  }
 }
 
 function parseFields(body: unknown): ItemFields {
@@ -228,6 +207,8 @@ export function createApiServer(db: DatabaseSync, botToken: string, publicDir: s
     const single = /^\/api\/items\/(\d+)$/.exec(url.pathname);
     if (req.method === 'PUT' && single) return putItem(req, Number(single[1]), me, now);
     if (req.method === 'DELETE' && single) return removeItem(Number(single[1]), me);
+    const notes = await routeNotes(db, req, url, me, now);
+    if (notes !== undefined) return notes;
     throw new HttpError(404, S.web.notFound);
   };
 

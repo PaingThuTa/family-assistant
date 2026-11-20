@@ -14,8 +14,6 @@ export function yangonTime(dayOffset: number, hour: number, minute: number, now 
   return Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), w.getUTCDate() + dayOffset, hour, minute) - OFFSET_MS;
 }
 
-export const yangonHour = (now = Date.now()) => wall(now).getUTCHours();
-
 function period(hour: number): string {
   if (hour < 12) return S.periods.morning;
   if (hour < 16) return S.periods.noon;
@@ -23,7 +21,7 @@ function period(hour: number): string {
   return S.periods.night;
 }
 
-export const formatHour = (hour: number) => `${period(hour)} ${hour % 12 || 12}`;
+const formatHour = (hour: number) => `${period(hour)} ${hour % 12 || 12}`;
 
 export function formatTime(ms: number): string {
   const w = wall(ms);

@@ -1,6 +1,7 @@
 // Mini App timeline. Plain DOM, no framework. All server text is set with textContent, never innerHTML.
 import { monthOf, monthRange, renderCalendar, shiftMonth } from './calendar.js';
 import { el, trashIcon } from './dom.js';
+import { renderNotes } from './notes.js';
 
 const tg = window.Telegram?.WebApp;
 
@@ -32,6 +33,9 @@ let state = {
   selected: null, // calendar: "YYYY-MM-DD"
   monthItems: [],
   editing: null, // id of the item open in the form, or null when adding
+  view: 'planner', // planner | notes
+  notes: [],
+  noteShared: true, // choice in the new-note form
 };
 const setState = (patch) => {
   state = { ...state, ...patch };
@@ -313,6 +317,77 @@ async function deleteEditing() {
   if (await removeItem(state.editing)) closeForm();
 }
 
+// ---------- notes ----------
+
+const noteActions = {
+  onNew: () => openNoteForm(),
+  onAddLine: (noteId, text) => notesCall(`/api/notes/${noteId}/items`, 'POST', { text }, noteId),
+  onToggle: (itemId) => notesCall(`/api/note-items/${itemId}/toggle`, 'POST'),
+  onDeleteLine: (itemId) => notesCall(`/api/note-items/${itemId}`, 'DELETE'),
+  onDeleteNote: async (noteId) => {
+    if (await confirmDelete()) notesCall(`/api/notes/${noteId}`, 'DELETE');
+  },
+};
+
+const drawNotes = (focusNoteId = null) => renderNotes($('notes'), state.notes, noteActions, focusNoteId);
+
+// Every notes endpoint answers with the full, fresh list.
+async function notesCall(path, method, body, focusNoteId = null) {
+  try {
+    const notes = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+    setState({ notes });
+    drawNotes(focusNoteId);
+    showMessage('');
+  } catch (err) {
+    showMessage(err.message);
+  }
+}
+
+const loadNotes = () => notesCall('/api/notes', 'GET');
+
+function chooseShared(shared) {
+  setState({ noteShared: shared });
+  for (const b of $('share-chips').querySelectorAll('button')) b.classList.toggle('active', b.dataset.shared === String(shared));
+}
+
+function openNoteForm() {
+  $('note-form').reset();
+  chooseShared(true);
+  $('note-error').hidden = true;
+  $('note-save').disabled = false;
+  $('note-dialog').showModal();
+  tg?.BackButton?.show();
+}
+
+async function submitNote(event) {
+  event.preventDefault();
+  if ($('note-save').disabled) return;
+  $('note-save').disabled = true;
+  try {
+    const notes = await api('/api/notes', {
+      method: 'POST',
+      body: JSON.stringify({ title: $('note-form').elements.title.value, shared: state.noteShared }),
+    });
+    setState({ notes });
+    $('note-dialog').close();
+    drawNotes(notes[0]?.id ?? null); // newest first: start typing its first line
+  } catch (err) {
+    $('note-error').textContent = err.message;
+    $('note-error').hidden = false;
+    $('note-save').disabled = false;
+  }
+}
+
+function setView(view) {
+  setState({ view });
+  $('planner').hidden = view !== 'planner';
+  $('notes').hidden = view !== 'notes';
+  for (const b of $('nav').querySelectorAll('button')) b.classList.toggle('active', b.dataset.view === view);
+  showMessage('');
+  if (view === 'notes') loadNotes();
+  else load();
+}
+
 // ---------- startup ----------
 
 // Fetches who I am and today's date. Re-run when the app returns, so "today" is right after midnight.
@@ -347,8 +422,22 @@ function wireEvents() {
   $('delete').addEventListener('click', deleteEditing);
   $('form').addEventListener('submit', submitForm);
   $('form-dialog').addEventListener('close', () => tg?.BackButton?.hide());
-  // Android back closes the form instead of the whole app.
-  tg?.BackButton?.onClick(closeForm);
+  $('note-dialog').addEventListener('close', () => tg?.BackButton?.hide());
+  // Android back closes whichever form is open instead of the whole app.
+  tg?.BackButton?.onClick(() => {
+    closeForm();
+    $('note-dialog').close();
+  });
+  $('nav').addEventListener('click', (e) => {
+    const view = e.target.closest('button')?.dataset.view;
+    if (view && view !== state.view) setView(view);
+  });
+  $('share-chips').addEventListener('click', (e) => {
+    const shared = e.target.closest('button')?.dataset.shared;
+    if (shared) chooseShared(shared === 'true');
+  });
+  $('note-cancel').addEventListener('click', () => $('note-dialog').close());
+  $('note-form').addEventListener('submit', submitNote);
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible' || !state.me) return;
     try {
@@ -356,7 +445,8 @@ function wireEvents() {
     } catch (err) {
       return showMessage(err.message);
     }
-    load();
+    if (state.view === 'notes') loadNotes();
+    else load();
   });
 }
 
@@ -378,6 +468,8 @@ async function init() {
     return fail(err.message);
   }
   wireEvents();
+  // The bot's "မှတ်စု" button opens the app with ?view=notes.
+  if (new URLSearchParams(location.search).get('view') === 'notes') setView('notes');
 }
 
 init();

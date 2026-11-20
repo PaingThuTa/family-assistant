@@ -1,10 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { ALERT_COMMANDS, initAlertTables, registerAlertCommands, startAlerts } from './alerts.ts';
 import { createApiServer } from './api.ts';
-import { createBot } from './bot.ts';
+import { createBot, finishBot } from './bot.ts';
 import { openDb, syncMembers, type MemberConfig, type Role } from './db.ts';
 import { startScheduler } from './scheduler.ts';
 import { S } from './strings.ts';
+import type { Home } from './weather.ts';
 
 const SCHEDULER = { intervalMs: 30_000, repeatMs: 5 * 60_000, maxPings: 6 };
 
@@ -38,14 +40,32 @@ function readMembers(): MemberConfig[] {
   return members;
 }
 
+// Home location for weather and quake alerts, rounded to ~1 km before it is sent to any service.
+function readHome(): Home | null {
+  const lat = Number(process.env.HOME_LAT);
+  const lon = Number(process.env.HOME_LON);
+  const valid = process.env.HOME_LAT && process.env.HOME_LON && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+  if (!valid) {
+    console.warn('HOME_LAT/HOME_LON are not set, so weather and quake alerts are off.');
+    return null;
+  }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  return { lat: round2(lat), lon: round2(lon) };
+}
+
 // Relative paths resolve from the project folder, not from wherever the bot was started.
 const dbPath = resolve(import.meta.dirname, '..', process.env.DB_PATH || 'data/family.db');
 mkdirSync(dirname(dbPath), { recursive: true });
 const db = openDb(dbPath);
 syncMembers(db, readMembers());
+initAlertTables(db);
 
-const bot = createBot(token, db);
+const bot = createBot(token, db, webAppUrl.startsWith('https://') ? webAppUrl : null);
+registerAlertCommands(bot, db); // must come before finishBot's catch-all
+finishBot(bot);
 const stopScheduler = startScheduler(db, bot.api, SCHEDULER);
+const home = readHome();
+const stopAlerts = home ? startAlerts(db, bot.api, home) : () => {};
 
 const server = createApiServer(db, token, resolve(import.meta.dirname, '..', 'public'));
 server.listen(port, () => console.info(`Mini App server on http://localhost:${port}`));
@@ -63,8 +83,15 @@ if (webAppUrl.startsWith('https://')) {
   console.warn('WEBAPP_URL is not an https:// URL, so the Timeline button is not set.');
 }
 
+try {
+  await bot.api.setMyCommands(ALERT_COMMANDS); // shows /alerts in Telegram's command list
+} catch (err: unknown) {
+  console.error('Could not set bot commands', err);
+}
+
 const shutdown = () => {
   stopScheduler();
+  stopAlerts();
   server.close();
   void bot.stop();
 };

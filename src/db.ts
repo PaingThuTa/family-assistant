@@ -44,6 +44,22 @@ CREATE TABLE IF NOT EXISTS items (
   done_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS items_status_due ON items(status, due_at);
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY,
+  owner_id INTEGER NOT NULL REFERENCES members(id),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 100),
+  shared INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS note_items (
+  id INTEGER PRIMARY KEY,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND 200),
+  checked INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS note_items_note ON note_items(note_id);
 `;
 
 type Row = Record<string, unknown>;
@@ -135,6 +151,14 @@ export function createItem(db: DatabaseSync, item: NewItem, now = Date.now()): n
     )
     .run(item.ownerId, item.createdById, item.title, item.dueAt, item.important ? 1 : 0, item.earlyPingAt ?? null, now);
   return Number(result.lastInsertRowid);
+}
+
+// A member's unfinished items, earliest first (late ones included).
+export function listOpenItems(db: DatabaseSync, ownerId: number, limit = 10): Item[] {
+  return db
+    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' ORDER BY due_at LIMIT ?`)
+    .all(ownerId, limit)
+    .map(toItem);
 }
 
 export function findItem(db: DatabaseSync, id: number): Item | undefined {

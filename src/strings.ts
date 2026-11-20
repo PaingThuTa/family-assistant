@@ -1,34 +1,24 @@
 // All Burmese UI text in one place. Review the wording with Mom.
 export const S = {
-  timerButton: '+ အချိန်မှတ်',
-  reminderButton: '+ သတိပေးချက်',
-  welcome: 'မင်္ဂလာပါ။ အောက်က ခလုတ်တွေကို နှိပ်ပြီး သုံးပါ။',
+  nextButton: 'နောက်ဘာလဲ?',
+  notesButton: 'မှတ်စု',
+  welcome: 'မင်္ဂလာပါ။ အောက်က ခလုတ်တွေကို နှိပ်ပြီး သုံးပါ။\nရာသီဥတု နဲ့ ငလျင် သတိပေးချက် လိုချင်ရင် /alerts ကို နှိပ်ပါ။',
   notMember: (telegramId: number) =>
     `ဒီဘော့ကို မိသားစုဝင်များသာ သုံးနိုင်ပါသည်။\nID: ${telegramId}`,
   useButtons: 'အောက်က ခလုတ်တွေကို နှိပ်ပါ။',
-  expired: 'ပြန်စပါ။',
   notAllowed: 'ဒါကို ပြင်ခွင့် မရှိပါ။',
 
-  pickTimer: 'ဘာအတွက် အချိန်မှတ်မလဲ?',
-  presets: { rice: 'ထမင်း', curry: 'ဟင်း', laundry: 'အဝတ်လျှော်' },
-  other: 'အခြား',
-  askTimerName: 'ဘာအတွက်လဲ? ရိုက်ထည့်ပါ။',
-  pickMinutes: (title: string) => `${title} - ဘယ်နှမိနစ်လဲ?`,
-  minutes: (n: number) => `${n} မိနစ်`,
-
-  askReminderText: 'ဘာကို သတိပေးရမလဲ? ရိုက်ထည့်ပါ။',
-  pickDay: (title: string) => `${title} - ဘယ်နေ့လဲ?`,
+  timePassed: 'ဒီအချိန် ကျော်သွားပြီ။ ပြန်ရွေးပါ။',
   today: 'ဒီနေ့',
   tomorrow: 'မနက်ဖြန်',
-  pickHour: 'ဘယ်အချိန်လဲ?',
-  pickMinute: 'မိနစ် ရွေးပါ။',
-  timePassed: 'ဒီအချိန် ကျော်သွားပြီ။ ပြန်ရွေးပါ။',
-  askImportant: 'အရေးကြီးလား? (ပြီးတဲ့အထိ ထပ်ခါထပ်ခါ သတိပေးမယ်)',
-  yes: 'ဟုတ်',
-  no: 'မဟုတ်',
   invalidTitle: 'စာသား ၁ လုံးမှ ၂၀၀ အထိ ရိုက်ပါ။',
 
-  saved: (title: string, when: string) => `မှတ်ထားပြီ: ${title}\n${when}`,
+  next: (title: string, when: string) => `နောက်တစ်ခု: ${title}\n${when}`,
+  nothingNext: 'လုပ်စရာ မရှိတော့ပါ။',
+  lateHeader: 'မပြီးသေးတာ:',
+  notesIntro: 'မှတ်စုတွေကို ဒီမှာ ဖွင့်ပါ။',
+  openNotes: 'မှတ်စု ဖွင့်မယ်',
+  notesUnavailable: 'မှတ်စု မဖွင့်နိုင်သေးပါ။',
   ping: (title: string) => `သတိပေးချက်: ${title}`,
   early: (minutes: number, title: string, time: string) => `${minutes} မိနစ်အကြာ (${time}): ${title}`,
   unanswered: (name: string, title: string, time: string) =>
@@ -43,6 +33,9 @@ export const S = {
     badDateTime: 'ရက်စွဲ သို့မဟုတ် အချိန် မှားနေပါတယ်။',
     notFound: 'မတွေ့ပါ။',
     error: 'တစ်ခုခု မှားသွားတယ်။ ပြန်ကြိုးစားပါ။',
+  },
+  notes: {
+    badText: (max: number) => `စာသား ၁ လုံးမှ ${max} အထိ ရိုက်ပါ။`,
   },
   weekdays: ['တနင်္ဂနွေ', 'တနင်္လာ', 'အင်္ဂါ', 'ဗုဒ္ဓဟူး', 'ကြာသပတေး', 'သောကြာ', 'စနေ'],
 

@@ -1,28 +1,16 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { createApiServer } from './api.ts';
 import { verifyInitData } from './auth.ts';
 import { createItem, findMemberByTelegramId, openDb, syncMembers } from './db.ts';
+import { sign, TEST_TOKEN } from './test-helpers.ts';
 
-const TOKEN = '123:test-token';
+const TOKEN = TEST_TOKEN;
 const MOM = 1;
 const DAD = 2;
 const ADMIN = 3;
 const BROTHER = 4;
-
-// Signs launch data the same way Telegram does.
-function sign(telegramId: number, authDate = Math.floor(Date.now() / 1000), token = TOKEN): string {
-  const params = new URLSearchParams({ auth_date: String(authDate), user: JSON.stringify({ id: telegramId }) });
-  const dataCheckString = [...params.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
-  const secret = createHmac('sha256', 'WebAppData').update(token).digest();
-  params.set('hash', createHmac('sha256', secret).update(dataCheckString).digest('hex'));
-  return params.toString();
-}
 
 const db = openDb(':memory:');
 syncMembers(db, [

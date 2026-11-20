@@ -19,7 +19,7 @@
 
 body {
   margin: 0;
-  padding: 12px 12px 120px;
+  padding: 12px 12px 170px; /* room for the + button and the bottom nav */
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, 'Noto Sans Myanmar', 'Myanmar Sangam MN', sans-serif;
@@ -312,7 +312,7 @@ h3 {
 .fab {
   position: fixed;
   right: 20px;
-  bottom: calc(20px + env(safe-area-inset-bottom));
+  bottom: calc(92px + env(safe-area-inset-bottom)); /* above the bottom nav */
   width: 68px;
   height: 68px;
   border: 0;
@@ -409,4 +409,158 @@ label.check input {
 
 .error {
   margin: 0;
+}
+
+/* ---------- bottom nav ---------- */
+
+#nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--track);
+  background: var(--card);
+}
+
+#nav button {
+  flex: 1;
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+
+#nav button.active {
+  background: var(--track);
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* ---------- notes ---------- */
+
+.new-note {
+  width: 100%;
+  margin: 4px 0 6px;
+  padding: 14px;
+  border: 2px dashed var(--track);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+}
+
+.note {
+  margin: 10px 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.note-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--track);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.badge.private {
+  background: color-mix(in srgb, var(--important) 20%, transparent);
+  color: var(--text);
+}
+
+.lines {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.tick {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 2px solid var(--muted);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.line.checked .tick {
+  border-color: var(--done);
+  /* a check mark drawn with CSS, no icon font or emoji */
+  background: var(--done) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center / 22px no-repeat;
+}
+
+.line-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.line.checked .line-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.line-x {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.add-line {
+  display: flex;
+  gap: 8px;
+}
+
+.add-line input {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-line button {
+  flex: none;
+  width: 52px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
 }

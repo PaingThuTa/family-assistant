@@ -10,6 +10,9 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
+    <p id="message" role="alert" hidden></p>
+
+    <div id="planner">
     <header>
       <div id="people" class="people" hidden></div>
       <div id="tabs" class="segmented">
@@ -20,7 +23,6 @@
       </div>
     </header>
 
-    <p id="message" role="alert" hidden></p>
     <section id="calendar" hidden></section>
     <!-- Skeleton cards show instantly, before any script or data arrives. -->
     <main id="list" aria-busy="true">
@@ -30,6 +32,14 @@
     </main>
 
     <button type="button" id="add" class="fab" aria-label="အသစ်ထည့်မယ်" hidden>+</button>
+    </div>
+
+    <section id="notes" hidden></section>
+
+    <nav id="nav">
+      <button type="button" data-view="planner" class="active">အစီအစဉ်</button>
+      <button type="button" data-view="notes">မှတ်စု</button>
+    </nav>
 
     <dialog id="form-dialog">
       <form id="form" novalidate>
@@ -49,6 +59,22 @@
           <button type="submit" id="save" class="primary">သိမ်းမယ်</button>
         </div>
         <button type="button" id="delete" class="danger" hidden>ဖျက်မယ်</button>
+      </form>
+    </dialog>
+
+    <dialog id="note-dialog">
+      <form id="note-form" novalidate>
+        <h2>မှတ်စုအသစ်</h2>
+        <label>ခေါင်းစဉ် <input name="title" maxlength="100" required autocomplete="off" /></label>
+        <div id="share-chips" class="segmented">
+          <button type="button" data-shared="true" class="active">မိသားစု</button>
+          <button type="button" data-shared="false">ကိုယ်ပိုင်</button>
+        </div>
+        <p id="note-error" class="error" hidden></p>
+        <div class="actions">
+          <button type="button" id="note-cancel" class="secondary">မလုပ်တော့ဘူး</button>
+          <button type="submit" id="note-save" class="primary">သိမ်းမယ်</button>
+        </div>
       </form>
     </dialog>
   </body>
