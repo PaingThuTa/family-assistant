@@ -12,6 +12,7 @@ const MEMBERS: { env: string; name: string; role: Role }[] = [
   { env: 'ADMIN_TELEGRAM_ID', name: 'Admin', role: 'admin' },
   { env: 'MOM_TELEGRAM_ID', name: 'Mom', role: 'member' },
   { env: 'DAD_TELEGRAM_ID', name: 'Dad', role: 'member' },
+  { env: 'BROTHER_TELEGRAM_ID', name: 'Brother', role: 'member' },
 ];
 
 const token = process.env.BOT_TOKEN;

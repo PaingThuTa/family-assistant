@@ -1,11 +1,11 @@
 // Mini App timeline. Plain DOM, no framework. All server text is set with textContent, never innerHTML.
 import { monthOf, monthRange, renderCalendar, shiftMonth } from './calendar.js';
-import { el } from './dom.js';
+import { el, trashIcon } from './dom.js';
 
 const tg = window.Telegram?.WebApp;
 
 const T = {
-  names: { Mom: 'အမေ', Dad: 'အဖေ', Admin: 'Admin' },
+  names: { Mom: 'မေမေ', Dad: 'ဖေဖေ', Brother: 'ညီလေး', Admin: 'Admin' },
   done: 'ပြီးပြီ',
   undo: 'ပြန်ဖွင့်',
   empty: 'ဘာမှ မရှိပါ',
@@ -14,6 +14,7 @@ const T = {
   addTitle: 'အသစ်ထည့်မယ်',
   editTitle: 'ပြင်မယ်',
   confirmDelete: 'ဒါကို ဖျက်မှာ သေချာလား?',
+  delete: 'ဖျက်မယ်',
 };
 const UNDO_MS = 5000;
 const SKELETON_DELAY_MS = 200; // fast loads never flash the skeleton
@@ -103,9 +104,22 @@ function actionButton(item) {
         setDone(item.id, done);
       },
     });
-  if (!item.done) return [button('done', T.done, true)];
-  if (item.id === state.justDone) return [button('undo', T.undo, false)];
-  return [];
+  const trash = el(
+    'button',
+    {
+      type: 'button',
+      className: 'trash',
+      ariaLabel: T.delete,
+      onclick: (e) => {
+        e.stopPropagation();
+        removeItem(item.id);
+      },
+    },
+    [trashIcon()],
+  );
+  if (!item.done) return [button('done', T.done, true), trash];
+  if (item.id === state.justDone) return [button('undo', T.undo, false), trash];
+  return [trash];
 }
 
 function card(item) {
@@ -281,15 +295,22 @@ async function submitForm(event) {
 const confirmDelete = () =>
   new Promise((resolve) => (tg?.showConfirm ? tg.showConfirm(T.confirmDelete, resolve) : resolve(window.confirm(T.confirmDelete))));
 
-async function deleteEditing() {
-  if (!(await confirmDelete())) return;
+// Used by the trash button on a card and the Delete button in the edit form. Returns true if deleted.
+async function removeItem(id) {
+  if (!(await confirmDelete())) return false;
   try {
-    await api(`/api/items/${state.editing}`, { method: 'DELETE' });
-    closeForm();
+    await api(`/api/items/${id}`, { method: 'DELETE' });
+    tg?.HapticFeedback?.notificationOccurred('success');
     await load();
+    return true;
   } catch (err) {
-    showFormError(err);
+    showMessage(err.message);
+    return false;
   }
+}
+
+async function deleteEditing() {
+  if (await removeItem(state.editing)) closeForm();
 }
 
 // ---------- startup ----------

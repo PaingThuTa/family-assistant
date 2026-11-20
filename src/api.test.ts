@@ -10,6 +10,7 @@ const TOKEN = '123:test-token';
 const MOM = 1;
 const DAD = 2;
 const ADMIN = 3;
+const BROTHER = 4;
 
 // Signs launch data the same way Telegram does.
 function sign(telegramId: number, authDate = Math.floor(Date.now() / 1000), token = TOKEN): string {
@@ -28,6 +29,7 @@ syncMembers(db, [
   { name: 'Admin', role: 'admin', telegramId: ADMIN },
   { name: 'Mom', role: 'member', telegramId: MOM },
   { name: 'Dad', role: 'member', telegramId: DAD },
+  { name: 'Brother', role: 'member', telegramId: BROTHER },
 ]);
 const momId = findMemberByTelegramId(db, MOM)!.id;
 const dadId = findMemberByTelegramId(db, DAD)!.id;
@@ -58,7 +60,7 @@ test('initData: tampered, wrong token, expired and stranger are all rejected', a
 
 test('mom sees mom and dad, but not the admin', async () => {
   const { body } = await call('/api/me', MOM);
-  assert.deepEqual(body.data.members.map((m: { name: string }) => m.name), ['Mom', 'Dad']);
+  assert.deepEqual(body.data.members.map((m: { name: string }) => m.name), ['Mom', 'Dad', 'Brother']);
   assert.equal(body.data.ownerId, momId);
   assert.ok(Array.isArray(body.data.items));
 });

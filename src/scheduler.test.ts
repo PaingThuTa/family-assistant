@@ -116,6 +116,6 @@ test('admin is told once when an important item uses up its pings', async () => 
   await pingDue(db, api, opts, NOW + 120_000); // one interval after the last ping
   await pingDue(db, api, opts, NOW + 180_000); // not again
   assert.deepEqual(sent.map(([chat]) => chat), [111, 111, 999]);
-  assert.match(sent[2]![1], /^အမေ မပြီးသေးပါ/);
+  assert.match(sent[2]![1], /^မေမေ မပြီးသေးပါ/);
   assert.ok(findItem(db, id)?.status === 'open');
 });
