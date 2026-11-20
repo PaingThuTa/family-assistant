@@ -7,15 +7,17 @@ The bot nudges each person until the task is done. Everyone can see the family's
 ## Features
 
 **Telegram bot**
-- **+ Timer:** one tap for rice (20 min), or pick a preset and minutes.
-- **+ Reminder:** type what, then pick the day, hour and minute with buttons.
-- **Pings with a Done button.** Important tasks and timers repeat every 5 minutes until Done (up to 6 times).
+- **နောက်ဘာလဲ? (What's next?):** one tap shows unfinished late tasks and the next task, with a Done button.
+- **မှတ်စု (Notes):** opens the family notes in the Mini App.
+- **Pings with a Done button.** Important tasks repeat every 5 minutes until Done (up to 6 times).
 - **Heads-up 10 minutes before** each scheduled reminder.
 - **Admin alert:** if an important task gets every ping and no Done, the admin is told.
+- **Opt-in alerts (`/alerts`):** rain expected within about 2 hours (silent at night), a 7:00 daily weather summary with a heat warning, and reports of nearby M4.5+ earthquakes. The earthquake alert comes from USGS a few minutes **after** a quake. It is a report, not an early warning.
 
 **Mini App (opens from the bot's menu button)**
 - One tab per family member, and Today / Tomorrow / 7 days / Calendar views.
 - Add, edit and delete tasks. Done comes with a 5-second undo.
+- **Notes:** a title plus lines you can tick off, like a shopping list. Each note is shared with the family or private to its creator (hidden even from the admin).
 - Late tasks are shown in red, and important tasks have an amber bar.
 - Follows Telegram's light or dark theme. Large text and big tap targets.
 
@@ -74,6 +76,7 @@ Put the printed `https://...trycloudflare.com` link in `.env` as `WEBAPP_URL` an
 | `WEBAPP_URL` | no | Public HTTPS address of this server, for the Mini App button |
 | `PORT` | no | HTTP port for the Mini App (default `3000`) |
 | `DB_PATH` | no | SQLite file (default `data/family.db`) |
+| `HOME_LAT`, `HOME_LON` | no | Home location for weather and earthquake alerts. Rounded to about 1 km before it is sent to Open-Meteo. Alerts are off if unset. |
 
 Reminder timing (the 30-second check, 5-minute repeats and 6 pings) is set in `src/index.ts`. The 10-minute heads-up is set in `src/scheduler.ts`.
 
@@ -90,9 +93,14 @@ npm run check   # type check
 ```
 src/
   index.ts        startup: config, database, bot, scheduler, HTTP server
-  bot.ts          Telegram chat flows (timer, reminder, Done)
+  bot.ts          Telegram chat buttons (What's next?, Notes) and Done
   scheduler.ts    sends heads-up, on-time and repeat pings, and admin alerts
-  api.ts          Mini App HTTP server and JSON API
+  alerts.ts       /alerts subscriptions; rain, daily weather and earthquake passes
+  weather.ts      Open-Meteo and USGS fetchers and alert rules
+  api.ts          Mini App HTTP server and task API
+  notes-api.ts    notes API (shared and private notes)
+  notes-db.ts     notes queries
+  http.ts         shared HTTP helpers
   auth.ts         verifies Telegram Mini App login data
   db.ts           SQLite schema and queries
   time.ts         Myanmar time (Asia/Yangon) helpers
@@ -102,6 +110,7 @@ public/
   index.html      Mini App page
   app.js          timeline, add/edit form, Done and delete
   calendar.js     month grid
+  notes.js        notes screen
   dom.js          small DOM helpers
   style.css       styles
 ```
@@ -118,7 +127,7 @@ Scheduled reminder, medicine at 6:30 pm:
   7:00  admin alert                 (if still not Done)
 ```
 
-Timers skip the heads-up, because the end of the timer is the reminder. Tapping Done anywhere, in a ping or in the Mini App, stops everything for that task.
+Tapping Done anywhere, in a ping or in the Mini App, stops everything for that task.
 
 ## Security and privacy
 
@@ -126,6 +135,7 @@ Timers skip the heads-up, because the end of the timer is the reminder. Tapping 
 - Only Telegram IDs listed in `.env` can use the bot or the API.
 - All user text is rendered as plain text, never as HTML.
 - Family data stays in one local SQLite file. `.env` and `data/` are git-ignored.
+- Only city-level coordinates (rounded to about 1 km) are sent to the weather service. Nothing else leaves the server except Telegram messages.
 
 ## Deployment
 
