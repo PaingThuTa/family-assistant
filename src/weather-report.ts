@@ -53,8 +53,7 @@ const E = {
   shirt: '\u{1F455}',
   glasses: '\u{1F576}\u{FE0F}',
   wind: '\u{1F32C}\u{FE0F}',
-  mask: '\u{1F637}',
-  hot: '\u{1F975}',
+  warn: '\u{26A0}\u{FE0F}', // marks the lines and values that need attention today
 };
 
 // Burmese text. Review the wording with Mom.
@@ -67,13 +66,14 @@ const W = {
   rainYes: 'မိုးရွာမယ်',
   laundryOk: `${E.shirt} အဝတ်လှန်းလို့ ရတယ်။`,
   umbrellaMaybe: `${E.umbrella} မိုးရွာနိုင်လို့ ထီး ယူထားပါ။`,
-  umbrellaYes: `${E.umbrella} ထီး ယူသွားပါ။ အဝတ် မလှန်းပါနဲ့။`,
-  sun: `${E.glasses} နေ့လယ် နေပူ ပြင်းမယ်။ ၁၁ - ၃ နာရီ အပြင် ရှောင်ပါ။`,
-  air: `${E.mask} လေထု မကောင်းဘူး။ အပြင်ထွက်ရင် mask တပ်ပါ။`,
-  hot: `${E.hot} အရမ်းပူမယ်။ ရေ များများ သောက်ပါ။`,
+  umbrellaYes: `${E.warn} ထီး ယူသွားပါ။ အဝတ် မလှန်းပါနဲ့။`,
+  sun: `${E.warn} နေ့လယ် နေပူ ပြင်းမယ်။ ၁၁ - ၃ နာရီ အပြင် ရှောင်ပါ။`,
+  air: `${E.warn} လေထု မကောင်းဘူး။ အပြင်ထွက်ရင် mask တပ်ပါ။`,
+  hot: `${E.warn} အရမ်းပူမယ်။ ရေ များများ သောက်ပါ။`,
   rainWhen: (parts: string) => `${E.rain} ${parts} မှာ မိုးရွာနိုင်တယ်`,
-  sunAndAir: (uv: number, uvWord: string, air: string | null) =>
-    `${E.glasses} UV ${uv} (${uvWord})${air === null ? '' : ` | ${E.wind} လေထု ${air}`}`,
+  sunAndAir: (uv: number, uvWord: string, uvBad: boolean, air: string | null, airBad: boolean) =>
+    `${E.glasses} UV ${uv} (${uvWord})${uvBad ? ` ${E.warn}` : ''}` +
+    (air === null ? '' : ` | ${E.wind} လေထု ${air}${airBad ? ` ${E.warn}` : ''}`),
   comingTitle: 'လာမယ့်ရက်',
   day: (name: string, sky: string, max: number, umbrella: boolean) =>
     `${name} - ${sky}၊ ${max}°${umbrella ? ` ${E.umbrella}` : ''}`,
@@ -191,7 +191,13 @@ export function formatReport(r: WeatherReport): string {
     `${sky(r.code)}၊ ${rainWords(r.today.rain)}`,
     W.now(r.temp, feels, r.today.max),
     ...(wetParts.length > 0 ? [W.rainWhen(wetParts.join('၊ '))] : []),
-    W.sunAndAir(r.today.uv, uvWord(r.today.uv), r.pm25 === null ? null : airWord(r.pm25)),
+    W.sunAndAir(
+      r.today.uv,
+      uvWord(r.today.uv),
+      r.today.uv >= SUN_ADVICE_UV,
+      r.pm25 === null ? null : airWord(r.pm25),
+      r.pm25 !== null && r.pm25 >= AIR_ADVICE_PM,
+    ),
     rainAdvice(r.today.rain),
     ...extras,
     '',

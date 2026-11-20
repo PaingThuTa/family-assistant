@@ -69,6 +69,14 @@ test('the UV and air line is always there; air is left out if that service faile
   assert.equal(airWord(80), 'မကောင်း');
 });
 
+test('days that matter are marked with a warning sign; normal days have none', () => {
+  const WARN = '\u{26A0}\u{FE0F}';
+  assert.ok(!report().includes(WARN));
+  const bad = report({ max: 39, uv: 9, rain: 80 }, 60);
+  assert.match(bad, new RegExp(`UV 9 \\(အလွန်ပြင်း\\) ${WARN} \\| .* လေထု မကောင်း ${WARN}`));
+  assert.equal(bad.split('\n').filter((l) => l.startsWith(WARN)).length, 4); // umbrella, heat, sun, air
+});
+
 test('feels-like is shown only when it differs by 3 degrees or more', () => {
   assert.doesNotMatch(report({ feels: 23 }), /ခံစားရ/);
 });
