@@ -1,0 +1,96 @@
+import { GrammyError, type Api } from 'grammy';
+import type { DatabaseSync } from 'node:sqlite';
+import {
+  findDueForPing,
+  findEarlyDue,
+  findUnanswered,
+  listActiveMembers,
+  markAlerted,
+  markEarlySent,
+  markPinged,
+  type DueItem,
+} from './db.ts';
+import { doneKeyboard } from './keyboards.ts';
+import { S } from './strings.ts';
+import { formatTime } from './time.ts';
+
+export const EARLY_MINUTES = 10;
+
+// Scheduled reminders get a heads-up ping, unless it would already be in the past. Timers never do.
+export const earlyPingFor = (dueAt: number, now: number): number | null => {
+  const at = dueAt - EARLY_MINUTES * 60_000;
+  return at > now ? at : null;
+};
+
+export interface SchedulerOptions {
+  intervalMs: number;
+  repeatMs: number;
+  maxPings: number;
+}
+
+export type PingApi = Pick<Api, 'sendMessage'>;
+
+// 4xx from Telegram (bot blocked, chat not found) will not fix itself by retrying in 30s.
+const isPermanent = (err: unknown) =>
+  err instanceof GrammyError && err.error_code >= 400 && err.error_code < 500 && err.error_code !== 429;
+
+// Sends one message and records it. Network/server errors are left unrecorded so the next pass
+// retries; permanent errors are recorded so they are not retried every 30 seconds.
+async function send(api: PingApi, chatId: number, item: DueItem, text: string, record: () => void): Promise<void> {
+  try {
+    await api.sendMessage(chatId, text, { reply_markup: doneKeyboard(item.id) });
+    record();
+  } catch (err: unknown) {
+    console.error(`Ping failed for item ${item.id}`, err);
+    if (isPermanent(err)) record();
+  }
+}
+
+// Tells the admin about important items that got every ping and still no Done.
+async function alertAdmin(db: DatabaseSync, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
+  const unanswered = findUnanswered(db, now, opts.repeatMs, opts.maxPings);
+  if (unanswered.length === 0) return;
+  const admin = listActiveMembers(db).find((m) => m.role === 'admin');
+  for (const item of unanswered) {
+    if (!admin?.telegramId) {
+      markAlerted(db, item.id, now); // nobody to tell; don't re-check it every pass
+      continue;
+    }
+    const text = S.unanswered(S.names[item.ownerName] ?? item.ownerName, item.title, formatTime(item.dueAt));
+    await send(api, admin.telegramId, item, text, () => markAlerted(db, item.id, now));
+  }
+}
+
+// One pass: heads-up pings, then on-time and repeat pings, then alerts for unanswered ones.
+export async function pingDue(db: DatabaseSync, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
+  for (const item of findEarlyDue(db, now)) {
+    const text = S.early(EARLY_MINUTES, item.title, formatTime(item.dueAt));
+    await send(api, item.ownerTelegramId, item, text, () => markEarlySent(db, item.id));
+  }
+  for (const item of findDueForPing(db, now, opts.repeatMs, opts.maxPings)) {
+    await send(api, item.ownerTelegramId, item, S.ping(item.title), () => markPinged(db, item.id, now));
+  }
+  await alertAdmin(db, api, opts, now);
+}
+
+// Runs pingDue on an interval. Returns a stop function.
+export function startScheduler(db: DatabaseSync, api: PingApi, opts: SchedulerOptions): () => void {
+  let running = false;
+
+  const tick = async () => {
+    if (running) return; // a slow pass must not double-ping
+    running = true;
+    try {
+      await pingDue(db, api, opts, Date.now());
+    } catch (err: unknown) {
+      // e.g. the database is locked or broken; keep the bot alive and try again next tick.
+      console.error('Scheduler pass failed', err);
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(tick, opts.intervalMs);
+  void tick();
+  return () => clearInterval(timer);
+}
