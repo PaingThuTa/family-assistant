@@ -5,6 +5,7 @@ import {
   listSubscribers,
   listSubscriptions,
   markSent,
+  runAlertPasses,
   runQuakePass,
   runWeatherPass,
   toggleSubscription,
@@ -234,4 +235,17 @@ test('alert records older than 30 days are pruned', async () => {
   await runWeatherPass(db, api, HOME, NOW, fakeFetch(forecastBody(0, 0)));
   assert.equal(await wasSent(db, 'quake:ancient'), false);
   assert.equal(await wasSent(db, 'quake:recent'), true);
+});
+
+test('the every-minute cron runs quakes every 2 minutes and weather every 15', async () => {
+  const { db, api } = await setup(['quake', 'rain']);
+  const urls: string[] = [];
+  const fetchFn = (async (url: string) => {
+    urls.push(String(url).includes('usgs') ? 'quake' : 'weather');
+    return new Response(JSON.stringify(String(url).includes('usgs') ? usgsBody([]) : forecastBody(0, 0)));
+  }) as unknown as FetchFn;
+  const start = at(DAY, '10:00'); // a multiple of 15 minutes
+  for (let m = 0; m < 15; m++) await runAlertPasses(db, api, HOME, start + m * 60_000, fetchFn);
+  assert.equal(urls.filter((u) => u === 'quake').length, 8); // minutes 0, 2, ..., 14
+  assert.equal(urls.filter((u) => u === 'weather').length, 1); // minute 0 only
 });

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import type { AddressInfo } from 'node:net';
-import { after, test } from 'node:test';
-import { createApiServer } from './api.ts';
+import { test } from 'node:test';
+import { createApiHandler } from './api.ts';
 import { openDb, syncMembers } from './db.ts';
 import { sign, TEST_TOKEN } from './test-helpers.ts';
 
@@ -15,10 +14,9 @@ await syncMembers(db, [
   { name: 'Mom', role: 'member', telegramId: MOM },
   { name: 'Dad', role: 'member', telegramId: DAD },
 ]);
-const server = createApiServer(db, TEST_TOKEN, '/nonexistent');
-await new Promise<void>((done) => server.listen(0, done));
-const base = `http://localhost:${(server.address() as AddressInfo).port}`;
-after(() => server.close());
+const handle = createApiHandler(db, TEST_TOKEN);
+const base = 'http://test';
+const fetch = (url: string, init: RequestInit) => handle(new Request(url, init));
 
 interface NoteView {
   id: number;

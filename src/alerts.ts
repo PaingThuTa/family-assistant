@@ -17,8 +17,8 @@ import {
 export const ALERT_KINDS = ['rain', 'daily', 'quake'] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
-const WEATHER_INTERVAL_MS = 15 * 60_000;
-const QUAKE_INTERVAL_MS = 2 * 60_000;
+const WEATHER_EVERY_MINUTES = 15;
+const QUAKE_EVERY_MINUTES = 2;
 const DAILY_HOUR = 7;
 const QUIET_FROM_HOUR = 21;
 const QUIET_TO_HOUR = 6;
@@ -193,30 +193,9 @@ export async function runQuakePass(
   }
 }
 
-// Runs a pass on an interval, never two at once. Returns a stop function.
-function every(ms: number, name: string, pass: (now: number) => Promise<void>): () => void {
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      await pass(Date.now());
-    } catch (err: unknown) {
-      console.error(`${name} pass failed`, err);
-    } finally {
-      running = false;
-    }
-  };
-  const timer = setInterval(tick, ms);
-  void tick();
-  return () => clearInterval(timer);
-}
-
-export function startAlerts(db: Db, api: PingApi, home: Home, fetchFn: FetchFn = fetch): () => void {
-  const stopWeather = every(WEATHER_INTERVAL_MS, 'Weather', (now) => runWeatherPass(db, api, home, now, fetchFn));
-  const stopQuakes = every(QUAKE_INTERVAL_MS, 'Quake', (now) => runQuakePass(db, api, home, now, fetchFn));
-  return () => {
-    stopWeather();
-    stopQuakes();
-  };
+// Called by the every-minute cron with its scheduled time: quakes every 2 minutes, weather every 15.
+export async function runAlertPasses(db: Db, api: PingApi, home: Home, now: number, fetchFn: FetchFn = fetch): Promise<void> {
+  const minute = Math.floor(now / 60_000);
+  if (minute % QUAKE_EVERY_MINUTES === 0) await runQuakePass(db, api, home, now, fetchFn);
+  if (minute % WEATHER_EVERY_MINUTES === 0) await runWeatherPass(db, api, home, now, fetchFn);
 }

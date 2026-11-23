@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "family-assistant",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-19",
+  "compatibility_flags": ["nodejs_compat"],
+  // public/ is served as static files; requests for anything else reach the Worker.
+  "assets": { "directory": "public" },
+  // Reminders every minute; quake (every 2 min) and weather (every 15 min) passes ride on the same cron.
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true },
+  // Settings live as secrets in the Cloudflare dashboard; keep deploys from wiping dashboard vars.
+  "keep_vars": true
+}

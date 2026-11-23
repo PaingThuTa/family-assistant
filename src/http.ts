@@ -1,4 +1,3 @@
-import type { IncomingMessage } from 'node:http';
 import { S } from './strings.ts';
 
 const MAX_BODY_BYTES = 10_000;
@@ -12,16 +11,12 @@ export class HttpError extends Error {
   }
 }
 
-export async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, S.web.error);
-    chunks.push(chunk as Buffer);
-  }
+export async function readJson(req: Request): Promise<unknown> {
+  if (Number(req.headers.get('content-length')) > MAX_BODY_BYTES) throw new HttpError(413, S.web.error);
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) throw new HttpError(413, S.web.error);
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(text);
   } catch {
     throw new HttpError(400, S.web.error);
   }

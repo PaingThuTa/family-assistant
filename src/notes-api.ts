@@ -1,4 +1,3 @@
-import type { IncomingMessage } from 'node:http';
 import type { Db, Member } from './db.ts';
 import { HttpError, readJson } from './http.ts';
 import {
@@ -53,7 +52,7 @@ async function visibleItem(db: Db, id: number, me: Member) {
 // Handles /api/notes and /api/note-items. Returns undefined when the request is not a notes route.
 export async function routeNotes(
   db: Db,
-  req: IncomingMessage,
+  req: Request,
   url: URL,
   me: Member,
   now: number,

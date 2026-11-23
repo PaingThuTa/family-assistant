@@ -23,7 +23,6 @@ export const earlyPingFor = (dueAt: number, now: number): number | null => {
 };
 
 export interface SchedulerOptions {
-  intervalMs: number;
   repeatMs: number;
   maxPings: number;
 }
@@ -71,26 +70,4 @@ export async function pingDue(db: Db, api: PingApi, opts: SchedulerOptions, now:
     await send(api, item.ownerTelegramId, item, S.ping(item.title), () => markPinged(db, item.id, now));
   }
   await alertAdmin(db, api, opts, now);
-}
-
-// Runs pingDue on an interval. Returns a stop function.
-export function startScheduler(db: Db, api: PingApi, opts: SchedulerOptions): () => void {
-  let running = false;
-
-  const tick = async () => {
-    if (running) return; // a slow pass must not double-ping
-    running = true;
-    try {
-      await pingDue(db, api, opts, Date.now());
-    } catch (err: unknown) {
-      // e.g. the database is locked or broken; keep the bot alive and try again next tick.
-      console.error('Scheduler pass failed', err);
-    } finally {
-      running = false;
-    }
-  };
-
-  const timer = setInterval(tick, opts.intervalMs);
-  void tick();
-  return () => clearInterval(timer);
 }

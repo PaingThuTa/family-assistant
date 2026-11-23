@@ -5,7 +5,7 @@ import { createItem, findItem, findMemberByTelegramId, openDb, syncMembers } fro
 import { earlyPingFor, pingDue, type PingApi } from './scheduler.ts';
 
 const NOW = 1_000_000_000;
-const OPTS = { intervalMs: 30_000, repeatMs: 5 * 60_000, maxPings: 6 };
+const OPTS = { repeatMs: 5 * 60_000, maxPings: 6 };
 
 async function setup(send: () => Promise<unknown>) {
   const db = await openDb(':memory:');
@@ -106,7 +106,7 @@ test('admin is told once when an important item uses up its pings', async () => 
       return {};
     },
   } as unknown as PingApi;
-  const opts = { intervalMs: 30_000, repeatMs: 60_000, maxPings: 2 };
+  const opts = { repeatMs: 60_000, maxPings: 2 };
 
   await pingDue(db, api, opts, NOW); // ping 1
   await pingDue(db, api, opts, NOW + 60_000); // ping 2 (the last)

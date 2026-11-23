@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { join } from 'node:path';
 import { verifyInitData } from './auth.ts';
 import { HttpError, readJson } from './http.ts';
 import { routeNotes } from './notes-api.ts';
@@ -28,19 +25,8 @@ const MAX_TITLE = 200;
 const RANGES = { today: [0, 1], tomorrow: [1, 2], week: [0, 7] } as const;
 const MAX_SPAN_MS = 62 * 24 * 60 * 60_000; // the calendar asks for one month at a time
 
-const STATIC: Record<string, { file: string; type: string }> = {
-  '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
-  '/app.js': { file: 'app.js', type: 'text/javascript; charset=utf-8' },
-  '/dom.js': { file: 'dom.js', type: 'text/javascript; charset=utf-8' },
-  '/calendar.js': { file: 'calendar.js', type: 'text/javascript; charset=utf-8' },
-  '/notes.js': { file: 'notes.js', type: 'text/javascript; charset=utf-8' },
-  '/style.css': { file: 'style.css', type: 'text/css; charset=utf-8' },
-};
-
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:",
-};
+// Static files in public/ are served by Cloudflare before the Worker runs; their headers are in public/_headers.
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff' };
 
 interface ApiResponse<T> {
   success: boolean;
@@ -77,10 +63,8 @@ const publicItem = (item: Item, me: Member, now: number) => ({
   canEdit: canEdit(me, item.ownerId),
 });
 
-function sendJson<T>(res: ServerResponse, status: number, body: ApiResponse<T>): void {
-  res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
-}
+const json = <T>(status: number, body: ApiResponse<T>): Response =>
+  new Response(JSON.stringify(body), { status, headers: { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' } });
 
 function parseFields(body: unknown): ItemFields {
   const b = (body ?? {}) as Record<string, unknown>;
@@ -106,10 +90,10 @@ function futureDueAt(fields: ItemFields, now: number): number {
   return dueAt;
 }
 
-// HTTP server for the Mini App: static files plus a JSON API that only family members can use.
-export function createApiServer(db: Db, botToken: string, publicDir: string): Server {
-  const authenticate = async (req: IncomingMessage): Promise<Member> => {
-    const header = req.headers.authorization ?? '';
+// JSON API for the Mini App that only family members can use.
+export function createApiHandler(db: Db, botToken: string): (req: Request) => Promise<Response> {
+  const authenticate = async (req: Request): Promise<Member> => {
+    const header = req.headers.get('authorization') ?? '';
     const telegramId = header.startsWith('tma ') ? verifyInitData(header.slice(4), botToken) : null;
     const member = telegramId === null ? undefined : await findMemberByTelegramId(db, telegramId);
     if (!member) throw new HttpError(401, S.web.unauthorized);
@@ -162,7 +146,7 @@ export function createApiServer(db: Db, botToken: string, publicDir: string): Se
     return item;
   };
 
-  const putItem = async (req: IncomingMessage, itemId: number, me: Member, now: number) => {
+  const putItem = async (req: Request, itemId: number, me: Member, now: number) => {
     const item = await editableItem(itemId, me);
     const fields = parseFields(await readJson(req));
     const dueAt = futureDueAt(fields, now);
@@ -175,7 +159,7 @@ export function createApiServer(db: Db, botToken: string, publicDir: string): Se
     return { id: itemId };
   };
 
-  const postItem = async (req: IncomingMessage, me: Member, now: number) => {
+  const postItem = async (req: Request, me: Member, now: number) => {
     const input = parseNewItem(await readJson(req));
     const owner = await findMember(db, input.ownerId);
     if (!owner) throw new HttpError(404, S.web.notFound);
@@ -197,7 +181,7 @@ export function createApiServer(db: Db, botToken: string, publicDir: string): Se
     return publicItem((await findItem(db, item.id))!, me, now);
   };
 
-  const route = async (req: IncomingMessage, url: URL, me: Member): Promise<unknown> => {
+  const route = async (req: Request, url: URL, me: Member): Promise<unknown> => {
     const now = Date.now();
     if (req.method === 'GET' && url.pathname === '/api/me') return getMe(me, now);
     if (req.method === 'GET' && url.pathname === '/api/items') return getItems(url, me, now);
@@ -212,25 +196,18 @@ export function createApiServer(db: Db, botToken: string, publicDir: string): Se
     throw new HttpError(404, S.web.notFound);
   };
 
-  return createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+  return async (req) => {
+    const url = new URL(req.url);
     try {
-      const asset = req.method === 'GET' ? STATIC[url.pathname] : undefined;
-      if (asset) {
-        const body = await readFile(join(publicDir, asset.file));
-        res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': asset.type, 'Cache-Control': 'no-cache' });
-        res.end(body);
-        return;
-      }
       if (!url.pathname.startsWith('/api/')) throw new HttpError(404, S.web.notFound);
       const me = await authenticate(req);
-      sendJson(res, 200, { success: true, data: await route(req, url, me), error: null });
+      return json(200, { success: true, data: await route(req, url, me), error: null });
     } catch (err: unknown) {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) console.error('API error', err);
       // Every message here is Burmese, because the app shows it to Mom as is.
       const message = err instanceof HttpError ? err.message : S.web.error;
-      sendJson(res, status, { success: false, data: null, error: message });
+      return json(status, { success: false, data: null, error: message });
     }
-  });
+  };
 }

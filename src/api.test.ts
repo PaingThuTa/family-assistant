@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import type { AddressInfo } from 'node:net';
-import { after, test } from 'node:test';
-import { createApiServer } from './api.ts';
+import { test } from 'node:test';
+import { createApiHandler } from './api.ts';
 import { verifyInitData } from './auth.ts';
 import { createItem, findMemberByTelegramId, openDb, syncMembers } from './db.ts';
 import { sign, TEST_TOKEN } from './test-helpers.ts';
@@ -23,10 +22,9 @@ const momId = (await findMemberByTelegramId(db, MOM))!.id;
 const dadId = (await findMemberByTelegramId(db, DAD))!.id;
 const dadItem = await createItem(db, { ownerId: dadId, createdById: dadId, title: 'work', dueAt: Date.now() + 3_600_000, important: false });
 
-const server = createApiServer(db, TOKEN, '/nonexistent');
-await new Promise<void>((done) => server.listen(0, done));
-const base = `http://localhost:${(server.address() as AddressInfo).port}`;
-after(() => server.close());
+const handle = createApiHandler(db, TOKEN);
+const base = 'http://test';
+const fetch = (url: string, init: RequestInit) => handle(new Request(url, init));
 
 async function call(path: string, as: number | null, body?: unknown) {
   const res = await fetch(base + path, {

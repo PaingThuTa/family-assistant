@@ -29,8 +29,9 @@ The bot nudges each person until the task is done. Everyone can see the family's
 
 ## Tech stack
 
-- **Node.js 22.18+**, running TypeScript directly with no build step
-- **SQLite** through [`@libsql/client`](https://github.com/tursodatabase/libsql-client-ts): a local file in development, [Turso](https://turso.tech) in production
+- **[Cloudflare Workers](https://workers.cloudflare.com)** (free plan): the bot gets updates by webhook, a cron runs every minute, and `public/` is served as static files
+- **TypeScript** with no build step for tests (Node 22.18+ runs it directly); Wrangler bundles it for deploy
+- **[Turso](https://turso.tech)** (SQLite in the cloud, free plan) through [`@libsql/client`](https://github.com/tursodatabase/libsql-client-ts)
 - **[grammY](https://grammy.dev)** for the Telegram bot
 - **Plain HTML, CSS and JavaScript** for the Mini App, with no framework
 - **`node:test`** for tests
@@ -41,31 +42,28 @@ The bot nudges each person until the task is done. Everyone can see the family's
 1. In Telegram, open [@BotFather](https://t.me/BotFather) and send `/newbot`.
 2. Copy the token it gives you.
 
-### 2. Install and configure
+### 2. Create the database
+Create a free [Turso](https://turso.tech) database. Copy its URL (`libsql://...`) and create a token (Read & Write, never expires).
+
+### 3. Deploy the Worker
 ```bash
 npm install
-cp .env.example .env
+npx wrangler login
+npm run deploy
 ```
-Put the token in `.env` as `BOT_TOKEN`.
+The deploy prints the Worker's address, `https://family-assistant.<subdomain>.workers.dev`.
 
-### 3. Register family members
-1. Run `npm start`.
-2. Each person sends `/start` to the bot. It replies with their Telegram ID.
-3. Add the IDs to `.env`:
-   ```
-   ADMIN_TELEGRAM_ID=...
-   MOM_TELEGRAM_ID=...
-   DAD_TELEGRAM_ID=...
-   BROTHER_TELEGRAM_ID=...
-   ```
-4. Restart. Anyone not listed is turned away.
+### 4. Add the settings
+In the Cloudflare dashboard, open the Worker, go to **Settings > Variables and Secrets** and add each key from `.env.example` as a **Secret**. `WEBAPP_URL` is the Worker's address. For `WEBHOOK_SECRET`, generate a random value with `openssl rand -hex 32`.
 
-### 4. Turn on the Mini App
-Telegram needs an HTTPS address. For local testing, use a free Cloudflare tunnel:
+Copy the same values into a local `.env` (git-ignored) and run:
 ```bash
-cloudflared tunnel --url http://localhost:3000
+npm run setup-telegram
 ```
-Put the printed `https://...trycloudflare.com` link in `.env` as `WEBAPP_URL` and restart. The **အစီအစဉ်** button appears next to the chat input.
+This points Telegram at the Worker and sets up the **အစီအစဉ်** menu button and the command menu. Run it again if `WEBAPP_URL` or `WEBHOOK_SECRET` changes.
+
+### 5. Register family members
+Each person sends `/start` to the bot. It replies with their Telegram ID. Add the IDs as the `*_TELEGRAM_ID` secrets. Anyone not listed is turned away.
 
 ## Configuration
 
@@ -74,33 +72,36 @@ Put the printed `https://...trycloudflare.com` link in `.env` as `WEBAPP_URL` an
 | `BOT_TOKEN` | yes | Token from @BotFather |
 | `ADMIN_TELEGRAM_ID` | no | Sees and manages everyone's tasks and gets missed-task alerts |
 | `MOM_TELEGRAM_ID`, `DAD_TELEGRAM_ID`, `BROTHER_TELEGRAM_ID` | no | Family members. Leave one empty to lock that person out. |
-| `WEBAPP_URL` | no | Public HTTPS address of this server, for the Mini App button |
-| `PORT` | no | HTTP port for the Mini App (default `3000`) |
-| `DB_PATH` | no | SQLite file (default `data/family.db`) |
-| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | no | Use a Turso database instead of the local file (production) |
+| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | yes | The Turso database and its token |
+| `WEBAPP_URL` | yes | The Worker's HTTPS address, for the Mini App and the webhook |
+| `WEBHOOK_SECRET` | yes | Random string Telegram sends with every update, so nobody else can post fake ones |
 | `HOME_LAT`, `HOME_LON` | no | Home location for weather and earthquake alerts. Rounded to about 1 km before it is sent to Open-Meteo. Alerts are off if unset. |
 
-Reminder timing (the 30-second check, 5-minute repeats and 6 pings) is set in `src/index.ts`. The 10-minute heads-up is set in `src/scheduler.ts`.
+Reminder timing (5-minute repeats and 6 pings) is set in `src/config.ts`, the every-minute cron in `wrangler.jsonc`, and the 10-minute heads-up in `src/scheduler.ts`.
 
 ## Scripts
 
 ```bash
-npm start       # run the bot and the Mini App server
-npm test        # run all tests
-npm run check   # type check
+npm test                 # run all tests
+npm run check            # type check
+npm run deploy           # deploy the Worker to Cloudflare
+npm run setup-telegram   # point Telegram at the Worker (reads .env)
+npm run dev              # run the Worker locally (reads .dev.vars)
 ```
 
 ## Project structure
 
 ```
 src/
-  index.ts        startup: config, database, bot, scheduler, HTTP server
+  worker.ts       Worker entry: webhook, Mini App API and the every-minute cron
+  config.ts       settings, family members and reminder timing
+  setup-telegram.ts  one-time webhook, menu button and command setup
   bot.ts          Telegram chat buttons (What's next?, Notes) and Done
   scheduler.ts    sends heads-up, on-time and repeat pings, and admin alerts
   alerts.ts       /alerts subscriptions; rain, daily weather and earthquake passes
   weather.ts      Open-Meteo and USGS fetchers and alert rules
   weather-report.ts  the Weather button's report (forecast + air quality)
-  api.ts          Mini App HTTP server and task API
+  api.ts          Mini App task API
   notes-api.ts    notes API (shared and private notes)
   notes-db.ts     notes queries
   http.ts         shared HTTP helpers
@@ -110,6 +111,7 @@ src/
   strings.ts      all Burmese bot text
   keyboards.ts    Telegram button layouts
 public/
+  _headers        security headers for the static files
   index.html      Mini App page
   app.js          timeline, add/edit form, Done and delete
   calendar.js     month grid
@@ -120,7 +122,7 @@ public/
 
 ## How reminders work
 
-The bot checks for due tasks every 30 seconds.
+The bot checks for due tasks every minute.
 
 ```
 Scheduled reminder, medicine at 6:30 pm:
@@ -135,17 +137,16 @@ Tapping Done anywhere, in a ping or in the Mini App, stops everything for that t
 ## Security and privacy
 
 - Every Mini App request is checked against Telegram's signed login data, using the bot token.
-- Only Telegram IDs listed in `.env` can use the bot or the API.
+- Bot updates are accepted only with the webhook secret that Telegram sends.
+- Only the Telegram IDs in the settings can use the bot or the API.
 - All user text is rendered as plain text, never as HTML.
-- Family data stays in one SQLite database: a local file, or your own Turso database in production. `.env` and `data/` are git-ignored.
-- Only city-level coordinates (rounded to about 1 km) are sent to the weather service. Apart from the database, nothing else leaves the server except Telegram messages.
+- Family data stays in your own Turso database. `.env` and `.dev.vars` are git-ignored.
+- Only city-level coordinates (rounded to about 1 km) are sent to the weather service. Apart from the database, nothing else leaves the Worker except Telegram messages.
 
 ## Deployment
 
-The bot must run all the time for reminders to arrive. The free setup is a Render web service plus a Turso database:
+Everything runs on free plans with no card: a Cloudflare Worker and a Turso database. The Worker sleeps between requests, and Telegram (webhook) and the cron (every minute) wake it, so reminders arrive without an always-on server.
 
-1. Create a Turso database, then copy its URL (`libsql://...`) and an auth token.
-2. Create a Render **Web Service** from this repo: build `npm ci --omit=dev`, start `npm start`. Add the variables from `.env.example`: set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`, and set `WEBAPP_URL` to the service's `https://<name>.onrender.com` address. Leave `PORT` unset; Render provides it.
-3. Render's free plan sleeps after 15 minutes without web traffic, which would stop reminders. Point a free uptime monitor (for example UptimeRobot) at the service URL every 5 minutes to keep it awake.
+To deploy a change, run `npm run deploy`. Or connect the repo under **Workers & Pages > the Worker > Settings > Build** so every push to `main` deploys.
 
-Every push to `main` redeploys. Render's disk is wiped on each deploy, which is why the data lives in Turso.
+Logs are under **Workers & Pages > the Worker > Observability**.
