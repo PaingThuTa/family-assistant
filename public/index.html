@@ -51,7 +51,14 @@
           <button type="button" data-day="pick">ရက်ရွေး</button>
         </div>
         <label id="date-field" hidden>ရက်စွဲ <input name="date" type="date" required /></label>
-        <label>အချိန် <input name="time" type="time" required /></label>
+        <label>အချိန် <select name="hour" required></select></label>
+        <div id="minute-chips" class="segmented">
+          <button type="button" data-minute="00">:00</button>
+          <button type="button" data-minute="15">:15</button>
+          <button type="button" data-minute="30">:30</button>
+          <button type="button" data-minute="45">:45</button>
+        </div>
+        <input name="minute" type="hidden" value="00" />
         <label class="check"><input name="important" type="checkbox" /> ပြီးတဲ့အထိ သတိပေး</label>
         <p id="form-error" class="error" hidden></p>
         <div class="actions">

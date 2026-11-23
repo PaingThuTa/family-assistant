@@ -16,6 +16,9 @@ const T = {
   editTitle: 'ပြင်မယ်',
   confirmDelete: 'ဒါကို ဖျက်မှာ သေချာလား?',
   delete: 'ဖျက်မယ်',
+  pickHour: 'နာရီ ရွေးပါ',
+  // Same words as the bot's times (strings.ts S.periods).
+  periods: { morning: 'မနက်', noon: 'နေ့လယ်', evening: 'ညနေ', night: 'ည' },
 };
 const UNDO_MS = 5000;
 const SKELETON_DELAY_MS = 200; // fast loads never flash the skeleton
@@ -236,6 +239,29 @@ async function setDone(id, done) {
 
 // ---------- add / edit form ----------
 
+// Hour is a short list ("ညနေ 5 နာရီ"); minutes are four buttons, so nobody scrolls through 60 minutes.
+const pad = (n) => String(n).padStart(2, '0');
+const period = (h) => (h < 12 ? T.periods.morning : h < 16 ? T.periods.noon : h < 19 ? T.periods.evening : T.periods.night);
+const hourLabel = (h) => `${period(h)} ${h % 12 || 12} နာရီ`;
+
+function fillHours() {
+  const options = Array.from({ length: 24 }, (_, h) => el('option', { value: pad(h), textContent: hourLabel(h) }));
+  $('form').elements.hour.append(el('option', { value: '', textContent: T.pickHour }), ...options);
+}
+
+// An edited task can have any minute (e.g. :10); it gets its own button so editing keeps it.
+function chooseMinute(minute) {
+  const chips = $('minute-chips');
+  chips.querySelector('[data-extra]')?.remove();
+  if (!chips.querySelector(`[data-minute="${minute}"]`)) {
+    const extra = el('button', { type: 'button', textContent: `:${minute}` });
+    Object.assign(extra.dataset, { minute, extra: '' });
+    chips.append(extra);
+  }
+  for (const b of chips.querySelectorAll('button')) b.classList.toggle('active', b.dataset.minute === minute);
+  $('form').elements.minute.value = minute;
+}
+
 function chooseDay(day) {
   for (const b of $('day-chips').querySelectorAll('button')) b.classList.toggle('active', b.dataset.day === day);
   $('date-field').hidden = day !== 'pick';
@@ -256,9 +282,11 @@ function openForm(item = null) {
   $('form-title').textContent = item ? T.editTitle : T.addTitle;
   $('delete').hidden = !item;
   setFormDate(item?.date ?? (state.range === 'calendar' ? state.selected : state.dates.today));
+  const [hour, minute] = item ? item.clock.split(':') : ['', '00'];
+  f.hour.value = hour;
+  chooseMinute(minute);
   if (item) {
     f.title.value = item.title;
-    f.time.value = item.clock;
     f.important.checked = item.important;
   }
   $('form-error').hidden = true;
@@ -277,9 +305,10 @@ function showFormError(err) {
 async function submitForm(event) {
   event.preventDefault();
   if ($('save').disabled) return;
-  $('save').disabled = true; // one tap, one task, even on a slow network
   const f = $('form').elements;
-  const fields = { title: f.title.value, date: f.date.value, time: f.time.value, important: f.important.checked };
+  if (!f.hour.value) return showFormError(new Error(T.pickHour));
+  $('save').disabled = true; // one tap, one task, even on a slow network
+  const fields = { title: f.title.value, date: f.date.value, time: `${f.hour.value}:${f.minute.value}`, important: f.important.checked };
   try {
     if (state.editing) {
       await api(`/api/items/${state.editing}`, { method: 'PUT', body: JSON.stringify(fields) });
@@ -417,6 +446,10 @@ function wireEvents() {
     const day = e.target.closest('button')?.dataset.day;
     if (day) chooseDay(day);
   });
+  $('minute-chips').addEventListener('click', (e) => {
+    const minute = e.target.closest('button')?.dataset.minute;
+    if (minute) chooseMinute(minute);
+  });
   $('add').addEventListener('click', () => openForm());
   $('cancel').addEventListener('click', closeForm);
   $('delete').addEventListener('click', deleteEditing);
@@ -472,6 +505,7 @@ async function init() {
   } catch (err) {
     return fail(err.message);
   }
+  fillHours();
   wireEvents();
   // The bot's "မှတ်စု" button opens the app with ?view=notes.
   if (new URLSearchParams(location.search).get('view') === 'notes') setView('notes');

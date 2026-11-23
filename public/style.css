@@ -353,7 +353,8 @@ label {
   color: var(--muted);
 }
 
-input {
+input,
+select {
   padding: 12px;
   border: 1px solid var(--track);
   border-radius: 12px;
