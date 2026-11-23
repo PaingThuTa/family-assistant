@@ -1,6 +1,5 @@
 import { Bot, type Context } from 'grammy';
-import type { DatabaseSync } from 'node:sqlite';
-import { findItem, findMemberByTelegramId, findWhatsNext, markDone, type Item, type Member } from './db.ts';
+import { findItem, findMemberByTelegramId, findWhatsNext, markDone, type Db, type Item, type Member } from './db.ts';
 import { doneKeyboard, mainKeyboard, openNotesKeyboard } from './keyboards.ts';
 import { S } from './strings.ts';
 import { formatWhen } from './time.ts';
@@ -18,14 +17,14 @@ export function nextReply(late: Item[], next: Item | undefined, now: number): { 
   return { text: lines.join('\n'), nextId: next?.id ?? null };
 }
 
-export function createBot(token: string, db: DatabaseSync, webAppUrl: string | null): Bot<Ctx> {
+export function createBot(token: string, db: Db, webAppUrl: string | null): Bot<Ctx> {
   const bot = new Bot<Ctx>(token);
 
   // Only registered family members get past this point.
   bot.use(async (ctx, next) => {
     // Private chats only: in a group, buttons would get mixed up between people.
     if (!ctx.from || ctx.chat?.type !== 'private') return;
-    const member = findMemberByTelegramId(db, ctx.from.id);
+    const member = await findMemberByTelegramId(db, ctx.from.id);
     if (!member) {
       await ctx.reply(S.notMember(ctx.from.id));
       return;
@@ -48,7 +47,7 @@ export function createBot(token: string, db: DatabaseSync, webAppUrl: string | n
 
   bot.hears(S.nextButton, async (ctx) => {
     const now = Date.now();
-    const { late, next } = findWhatsNext(db, ctx.member.id, now, MAX_LATE_SHOWN);
+    const { late, next } = await findWhatsNext(db, ctx.member.id, now, MAX_LATE_SHOWN);
     const { text, nextId } = nextReply(late, next, now);
     await ctx.reply(text, nextId === null ? {} : { reply_markup: doneKeyboard(nextId) });
   });
@@ -59,10 +58,10 @@ export function createBot(token: string, db: DatabaseSync, webAppUrl: string | n
   });
 
   bot.callbackQuery(/^done:(\d+)$/, async (ctx) => {
-    const item = findItem(db, Number(ctx.match[1]));
+    const item = await findItem(db, Number(ctx.match[1]));
     if (!item) return ctx.editMessageText(S.web.notFound); // deleted in the Mini App
     if (item.ownerId !== ctx.member.id && ctx.member.role !== 'admin') return ctx.editMessageText(S.notAllowed);
-    markDone(db, item.id);
+    await markDone(db, item.id);
     return ctx.editMessageText(S.marked(item.title));
   });
 

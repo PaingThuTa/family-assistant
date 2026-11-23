@@ -7,11 +7,11 @@ import { earlyPingFor, pingDue, type PingApi } from './scheduler.ts';
 const NOW = 1_000_000_000;
 const OPTS = { intervalMs: 30_000, repeatMs: 5 * 60_000, maxPings: 6 };
 
-function setup(send: () => Promise<unknown>) {
-  const db = openDb(':memory:');
-  syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 111 }]);
-  const mom = findMemberByTelegramId(db, 111)!;
-  const id = createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'rice', dueAt: NOW - 1, important: false });
+async function setup(send: () => Promise<unknown>) {
+  const db = await openDb(':memory:');
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 111 }]);
+  const mom = (await findMemberByTelegramId(db, 111))!;
+  const id = await createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'rice', dueAt: NOW - 1, important: false });
   const sent: number[] = [];
   const api = {
     sendMessage: async (chatId: number | string) => {
@@ -23,38 +23,38 @@ function setup(send: () => Promise<unknown>) {
 }
 
 test('a sent ping is recorded and not sent again', async () => {
-  const { db, api, id, sent } = setup(async () => ({}));
+  const { db, api, id, sent } = await setup(async () => ({}));
   await pingDue(db, api, OPTS, NOW);
   await pingDue(db, api, OPTS, NOW + 30_000);
   assert.deepEqual(sent, [111]);
-  assert.equal(findItem(db, id)?.pingCount, 1);
+  assert.equal((await findItem(db, id))?.pingCount, 1);
 });
 
 test('a network error is retried on the next pass', async () => {
-  const { db, api, id, sent } = setup(async () => {
+  const { db, api, id, sent } = await setup(async () => {
     throw new HttpError('network down', new Error('ECONNRESET'));
   });
   await pingDue(db, api, OPTS, NOW);
   await pingDue(db, api, OPTS, NOW + 30_000);
   assert.equal(sent.length, 2);
-  assert.equal(findItem(db, id)?.pingCount, 0);
+  assert.equal((await findItem(db, id))?.pingCount, 0);
 });
 
 test('a blocked bot (403) is not retried every pass', async () => {
-  const { db, api, id, sent } = setup(async () => {
+  const { db, api, id, sent } = await setup(async () => {
     throw new GrammyError('blocked', { ok: false, error_code: 403, description: 'Forbidden' }, 'sendMessage', {});
   });
   await pingDue(db, api, OPTS, NOW);
   await pingDue(db, api, OPTS, NOW + 30_000);
   assert.equal(sent.length, 1);
-  assert.equal(findItem(db, id)?.pingCount, 1);
+  assert.equal((await findItem(db, id))?.pingCount, 1);
 });
 
-function setupEarly(dueAt: number, earlyPingAt: number | null) {
-  const db = openDb(':memory:');
-  syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 111 }]);
-  const mom = findMemberByTelegramId(db, 111)!;
-  const id = createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'medicine', dueAt, important: false, earlyPingAt });
+async function setupEarly(dueAt: number, earlyPingAt: number | null) {
+  const db = await openDb(':memory:');
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 111 }]);
+  const mom = (await findMemberByTelegramId(db, 111))!;
+  const id = await createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'medicine', dueAt, important: false, earlyPingAt });
   const texts: string[] = [];
   const api = {
     sendMessage: async (_chatId: number | string, text: string) => {
@@ -72,7 +72,7 @@ test('earlyPingFor gives 10 minutes before, or nothing if that is already past',
 
 test('a heads-up is sent once before the due time, then the on-time ping', async () => {
   const due = NOW + 10 * 60_000;
-  const { db, api, texts } = setupEarly(due, NOW);
+  const { db, api, texts } = await setupEarly(due, NOW);
   await pingDue(db, api, OPTS, NOW);
   await pingDue(db, api, OPTS, NOW + 30_000);
   assert.equal(texts.length, 1);
@@ -84,21 +84,21 @@ test('a heads-up is sent once before the due time, then the on-time ping', async
 
 test('a heads-up that is late (bot was down) is skipped', async () => {
   const due = NOW;
-  const { db, api, id, texts } = setupEarly(due, NOW - 10 * 60_000);
+  const { db, api, id, texts } = await setupEarly(due, NOW - 10 * 60_000);
   await pingDue(db, api, OPTS, NOW + 1);
   assert.equal(texts.length, 1);
   assert.match(texts[0]!, /^သတိပေးချက်/);
-  assert.equal(findItem(db, id)?.earlyPingAt, null);
+  assert.equal((await findItem(db, id))?.earlyPingAt, null);
 });
 
 test('admin is told once when an important item uses up its pings', async () => {
-  const db = openDb(':memory:');
-  syncMembers(db, [
+  const db = await openDb(':memory:');
+  await syncMembers(db, [
     { name: 'Admin', role: 'admin', telegramId: 999 },
     { name: 'Mom', role: 'member', telegramId: 111 },
   ]);
-  const mom = findMemberByTelegramId(db, 111)!;
-  const id = createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'rice', dueAt: NOW, important: true });
+  const mom = (await findMemberByTelegramId(db, 111))!;
+  const id = await createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'rice', dueAt: NOW, important: true });
   const sent: [number, string][] = [];
   const api = {
     sendMessage: async (chatId: number | string, text: string) => {
@@ -117,5 +117,5 @@ test('admin is told once when an important item uses up its pings', async () => 
   await pingDue(db, api, opts, NOW + 180_000); // not again
   assert.deepEqual(sent.map(([chat]) => chat), [111, 111, 999]);
   assert.match(sent[2]![1], /^မေမေ မပြီးသေးပါ/);
-  assert.ok(findItem(db, id)?.status === 'open');
+  assert.ok((await findItem(db, id))?.status === 'open');
 });

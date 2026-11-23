@@ -1,6 +1,5 @@
 import type { IncomingMessage } from 'node:http';
-import type { DatabaseSync } from 'node:sqlite';
-import type { Member } from './db.ts';
+import type { Db, Member } from './db.ts';
 import { HttpError, readJson } from './http.ts';
 import {
   addNoteItem,
@@ -38,64 +37,64 @@ function cleanText(value: unknown, max: number): string {
 }
 
 // A note the member may see. Notes they may not see are reported as missing, so private ones stay hidden.
-function visibleNote(db: DatabaseSync, id: number, me: Member): Note {
-  const note = findNote(db, id);
+async function visibleNote(db: Db, id: number, me: Member): Promise<Note> {
+  const note = await findNote(db, id);
   if (!note || !canSee(note, me)) throw new HttpError(404, S.web.notFound);
   return note;
 }
 
-function visibleItem(db: DatabaseSync, id: number, me: Member) {
-  const item = findNoteItem(db, id);
+async function visibleItem(db: Db, id: number, me: Member) {
+  const item = await findNoteItem(db, id);
   if (!item) throw new HttpError(404, S.web.notFound);
-  visibleNote(db, item.noteId, me);
+  await visibleNote(db, item.noteId, me);
   return item;
 }
 
 // Handles /api/notes and /api/note-items. Returns undefined when the request is not a notes route.
 export async function routeNotes(
-  db: DatabaseSync,
+  db: Db,
   req: IncomingMessage,
   url: URL,
   me: Member,
   now: number,
 ): Promise<unknown> {
   const { pathname } = url;
-  const list = () => listVisibleNotes(db, me.id).map((n) => publicNote(n, me));
+  const list = async () => (await listVisibleNotes(db, me.id)).map((n) => publicNote(n, me));
 
   if (pathname === '/api/notes' && req.method === 'GET') return list();
 
   if (pathname === '/api/notes' && req.method === 'POST') {
     const body = (await readJson(req)) as Record<string, unknown> | null;
     if (typeof body?.shared !== 'boolean') throw new HttpError(400, S.web.error);
-    createNote(db, me.id, cleanText(body.title, MAX_TITLE), body.shared, now);
+    await createNote(db, me.id, cleanText(body.title, MAX_TITLE), body.shared, now);
     return list();
   }
 
   const note = /^\/api\/notes\/(\d+)$/.exec(pathname);
   if (note && req.method === 'DELETE') {
-    const found = visibleNote(db, Number(note[1]), me);
+    const found = await visibleNote(db, Number(note[1]), me);
     if (!canDelete(found, me)) throw new HttpError(403, S.notAllowed);
-    deleteNote(db, found.id);
+    await deleteNote(db, found.id);
     return list();
   }
 
   const lines = /^\/api\/notes\/(\d+)\/items$/.exec(pathname);
   if (lines && req.method === 'POST') {
-    const found = visibleNote(db, Number(lines[1]), me);
+    const found = await visibleNote(db, Number(lines[1]), me);
     const body = (await readJson(req)) as Record<string, unknown> | null;
-    addNoteItem(db, found.id, cleanText(body?.text, MAX_LINE), now);
+    await addNoteItem(db, found.id, cleanText(body?.text, MAX_LINE), now);
     return list();
   }
 
   const toggle = /^\/api\/note-items\/(\d+)\/toggle$/.exec(pathname);
   if (toggle && req.method === 'POST') {
-    toggleNoteItem(db, visibleItem(db, Number(toggle[1]), me), now);
+    await toggleNoteItem(db, await visibleItem(db, Number(toggle[1]), me), now);
     return list();
   }
 
   const line = /^\/api\/note-items\/(\d+)$/.exec(pathname);
   if (line && req.method === 'DELETE') {
-    deleteNoteItem(db, visibleItem(db, Number(line[1]), me), now);
+    await deleteNoteItem(db, await visibleItem(db, Number(line[1]), me), now);
     return list();
   }
 

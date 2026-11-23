@@ -12,16 +12,16 @@ const DAD = 2;
 const ADMIN = 3;
 const BROTHER = 4;
 
-const db = openDb(':memory:');
-syncMembers(db, [
+const db = await openDb(':memory:');
+await syncMembers(db, [
   { name: 'Admin', role: 'admin', telegramId: ADMIN },
   { name: 'Mom', role: 'member', telegramId: MOM },
   { name: 'Dad', role: 'member', telegramId: DAD },
   { name: 'Brother', role: 'member', telegramId: BROTHER },
 ]);
-const momId = findMemberByTelegramId(db, MOM)!.id;
-const dadId = findMemberByTelegramId(db, DAD)!.id;
-const dadItem = createItem(db, { ownerId: dadId, createdById: dadId, title: 'work', dueAt: Date.now() + 3_600_000, important: false });
+const momId = (await findMemberByTelegramId(db, MOM))!.id;
+const dadId = (await findMemberByTelegramId(db, DAD))!.id;
+const dadItem = await createItem(db, { ownerId: dadId, createdById: dadId, title: 'work', dueAt: Date.now() + 3_600_000, important: false });
 
 const server = createApiServer(db, TOKEN, '/nonexistent');
 await new Promise<void>((done) => server.listen(0, done));

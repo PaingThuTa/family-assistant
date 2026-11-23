@@ -26,14 +26,14 @@ test('says nothing is left when there are no tasks', () => {
   assert.deepEqual(nextReply([], undefined, NOW), { text: 'လုပ်စရာ မရှိတော့ပါ။', nextId: null });
 });
 
-test('11 late tasks do not hide the next upcoming one (review bug)', () => {
-  const db = openDb(':memory:');
-  syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 1 }]);
-  const mom = findMemberByTelegramId(db, 1)!.id;
+test('11 late tasks do not hide the next upcoming one (review bug)', async () => {
+  const db = await openDb(':memory:');
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 1 }]);
+  const mom = (await findMemberByTelegramId(db, 1))!.id;
   const add = (title: string, dueAt: number) => createItem(db, { ownerId: mom, createdById: mom, title, dueAt, important: false });
-  for (let i = 0; i < 11; i++) add(`late ${i}`, NOW - (20 - i) * 60_000);
-  const nextId = add('upcoming', NOW + 60_000);
-  const { late, next } = findWhatsNext(db, mom, NOW, 3);
+  for (let i = 0; i < 11; i++) await add(`late ${i}`, NOW - (20 - i) * 60_000);
+  const nextId = await add('upcoming', NOW + 60_000);
+  const { late, next } = await findWhatsNext(db, mom, NOW, 3);
   assert.equal(late.length, 3);
   assert.equal(next?.id, nextId);
   assert.match(nextReply(late, next, NOW).text, /နောက်တစ်ခု: upcoming/);

@@ -1,4 +1,7 @@
-import { DatabaseSync } from 'node:sqlite';
+import { createClient, type Client, type InValue } from '@libsql/client';
+
+// Local file in dev and tests, Turso in production. Same SQL either way.
+export type Db = Client;
 
 export type Role = 'member' | 'admin';
 export type Member = { id: number; telegramId: number | null; name: string; role: Role };
@@ -64,6 +67,12 @@ CREATE INDEX IF NOT EXISTS note_items_note ON note_items(note_id);
 
 type Row = Record<string, unknown>;
 
+export const rows = async (db: Db, sql: string, ...args: InValue[]): Promise<Row[]> =>
+  (await db.execute({ sql, args })).rows as unknown as Row[];
+export const first = async (db: Db, sql: string, ...args: InValue[]): Promise<Row | undefined> =>
+  (await rows(db, sql, ...args))[0];
+export const run = (db: Db, sql: string, ...args: InValue[]) => db.execute({ sql, args });
+
 const toMember = (r: Row): Member => ({
   id: Number(r.id),
   telegramId: r.telegram_id == null ? null : Number(r.telegram_id),
@@ -87,10 +96,10 @@ const toItem = (r: Row): Item => ({
 // ponytail: add-column-if-missing is enough for now; use a migrations table once there are several.
 const ADDED_COLUMNS = ['early_ping_at', 'alerted_at'];
 
-function migrate(db: DatabaseSync): void {
-  const columns = db.prepare('PRAGMA table_info(items)').all().map((c) => String(c.name));
+async function migrate(db: Db): Promise<void> {
+  const columns = (await rows(db, 'PRAGMA table_info(items)')).map((c) => String(c.name));
   for (const column of ADDED_COLUMNS) {
-    if (!columns.includes(column)) db.exec(`ALTER TABLE items ADD COLUMN ${column} INTEGER`);
+    if (!columns.includes(column)) await db.execute(`ALTER TABLE items ADD COLUMN ${column} INTEGER`);
   }
 }
 
@@ -103,159 +112,158 @@ const toDueItem = (r: Row): DueItem => ({
   ownerName: String(r.owner_name),
 });
 
-export function openDb(path: string): DatabaseSync {
-  const db = new DatabaseSync(path);
-  db.exec(SCHEMA);
-  migrate(db);
+export async function openDb(url: string, authToken?: string): Promise<Db> {
+  const db = createClient({ url, authToken });
+  await db.executeMultiple(SCHEMA);
+  await migrate(db);
   return db;
 }
 
 // Members are keyed by name, so changing someone's Telegram ID moves their items with them
 // and the old ID loses access. A member with no ID configured is locked out.
-export function syncMembers(db: DatabaseSync, members: MemberConfig[]): void {
-  const upsert = db.prepare(
-    `INSERT INTO members (name, role, telegram_id) VALUES (?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET role = excluded.role, telegram_id = excluded.telegram_id`,
+export async function syncMembers(db: Db, members: MemberConfig[]): Promise<void> {
+  // One batch is one transaction: all or nothing.
+  await db.batch(
+    [
+      'UPDATE members SET telegram_id = NULL', // lets two people swap IDs without a UNIQUE clash
+      ...members.map((m) => ({
+        sql: `INSERT INTO members (name, role, telegram_id) VALUES (?, ?, ?)
+              ON CONFLICT(name) DO UPDATE SET role = excluded.role, telegram_id = excluded.telegram_id`,
+        args: [m.name, m.role, m.telegramId],
+      })),
+    ],
+    'write',
   );
-  db.exec('BEGIN');
-  try {
-    db.exec('UPDATE members SET telegram_id = NULL'); // lets two people swap IDs without a UNIQUE clash
-    for (const m of members) upsert.run(m.name, m.role, m.telegramId);
-    db.exec('COMMIT');
-  } catch (err: unknown) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
 }
 
-export function findMemberByTelegramId(db: DatabaseSync, telegramId: number): Member | undefined {
-  const row = db.prepare('SELECT * FROM members WHERE telegram_id = ?').get(telegramId);
+export async function findMemberByTelegramId(db: Db, telegramId: number): Promise<Member | undefined> {
+  const row = await first(db, 'SELECT * FROM members WHERE telegram_id = ?', telegramId);
   return row ? toMember(row) : undefined;
 }
 
-export function findMember(db: DatabaseSync, id: number): Member | undefined {
-  const row = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
+export async function findMember(db: Db, id: number): Promise<Member | undefined> {
+  const row = await first(db, 'SELECT * FROM members WHERE id = ?', id);
   return row ? toMember(row) : undefined;
 }
 
 // Members who can currently use the bot.
-export function listActiveMembers(db: DatabaseSync): Member[] {
-  return db.prepare('SELECT * FROM members WHERE telegram_id IS NOT NULL ORDER BY id').all().map(toMember);
+export async function listActiveMembers(db: Db): Promise<Member[]> {
+  return (await rows(db, 'SELECT * FROM members WHERE telegram_id IS NOT NULL ORDER BY id')).map(toMember);
 }
 
-export function createItem(db: DatabaseSync, item: NewItem, now = Date.now()): number {
-  const result = db
-    .prepare(
-      `INSERT INTO items (owner_id, created_by_id, title, due_at, important, early_ping_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(item.ownerId, item.createdById, item.title, item.dueAt, item.important ? 1 : 0, item.earlyPingAt ?? null, now);
+export async function createItem(db: Db, item: NewItem, now = Date.now()): Promise<number> {
+  const result = await run(
+    db,
+    `INSERT INTO items (owner_id, created_by_id, title, due_at, important, early_ping_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    item.ownerId, item.createdById, item.title, item.dueAt, item.important ? 1 : 0, item.earlyPingAt ?? null, now,
+  );
   return Number(result.lastInsertRowid);
 }
 
 // For "What's next?": a few unfinished late items (oldest first) and the next upcoming one.
 // Two queries, so many late items can never hide the next one.
-export function findWhatsNext(db: DatabaseSync, ownerId: number, now: number, lateLimit: number): { late: Item[]; next: Item | undefined } {
-  const late = db
-    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT ?`)
-    .all(ownerId, now, lateLimit)
-    .map(toItem);
-  const next = db
-    .prepare(`SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at > ? ORDER BY due_at LIMIT 1`)
-    .get(ownerId, now);
+export async function findWhatsNext(db: Db, ownerId: number, now: number, lateLimit: number): Promise<{ late: Item[]; next: Item | undefined }> {
+  const late = (
+    await rows(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT ?`, ownerId, now, lateLimit)
+  ).map(toItem);
+  const next = await first(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at > ? ORDER BY due_at LIMIT 1`, ownerId, now);
   return { late, next: next ? toItem(next) : undefined };
 }
 
-export function findItem(db: DatabaseSync, id: number): Item | undefined {
-  const row = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
+export async function findItem(db: Db, id: number): Promise<Item | undefined> {
+  const row = await first(db, 'SELECT * FROM items WHERE id = ?', id);
   return row ? toItem(row) : undefined;
 }
 
 // Items due in [from, to). With carryOver, unfinished items from before `from` are included too.
-export function listItems(db: DatabaseSync, ownerId: number, from: number, to: number, carryOver: boolean): Item[] {
-  return db
-    .prepare(
+export async function listItems(db: Db, ownerId: number, from: number, to: number, carryOver: boolean): Promise<Item[]> {
+  return (
+    await rows(
+      db,
       `SELECT * FROM items
        WHERE owner_id = ?
          AND ((due_at >= ? AND due_at < ?) OR (? = 1 AND status = 'open' AND due_at < ?))
        ORDER BY due_at`,
+      ownerId, from, to, carryOver ? 1 : 0, from,
     )
-    .all(ownerId, from, to, carryOver ? 1 : 0, from)
-    .map(toItem);
+  ).map(toItem);
 }
 
 // Due items that need a ping: never pinged yet, or important and due for a repeat.
-export function findDueForPing(db: DatabaseSync, now: number, repeatMs: number, maxPings: number): DueItem[] {
-  return db
-    .prepare(
+export async function findDueForPing(db: Db, now: number, repeatMs: number, maxPings: number): Promise<DueItem[]> {
+  return (
+    await rows(
+      db,
       `${DUE_SELECT}
        WHERE i.status = 'open' AND i.due_at <= ?
          AND (i.ping_count = 0
               OR (i.important = 1 AND i.ping_count < ? AND i.last_pinged_at <= ?))
        ORDER BY i.due_at`,
+      now, maxPings, now - repeatMs,
     )
-    .all(now, maxPings, now - repeatMs)
-    .map(toDueItem);
+  ).map(toDueItem);
 }
 
 // Once the on-time ping goes out, a heads-up that never got sent is pointless, so clear it too.
-export function markPinged(db: DatabaseSync, id: number, now: number): void {
-  db.prepare('UPDATE items SET ping_count = ping_count + 1, last_pinged_at = ?, early_ping_at = NULL WHERE id = ?').run(
-    now,
-    id,
-  );
+export async function markPinged(db: Db, id: number, now: number): Promise<void> {
+  await run(db, 'UPDATE items SET ping_count = ping_count + 1, last_pinged_at = ?, early_ping_at = NULL WHERE id = ?', now, id);
 }
 
 // Open items whose heads-up time has come but whose due time has not.
-export function findEarlyDue(db: DatabaseSync, now: number): DueItem[] {
-  return db
-    .prepare(
+export async function findEarlyDue(db: Db, now: number): Promise<DueItem[]> {
+  return (
+    await rows(
+      db,
       `${DUE_SELECT}
        WHERE i.status = 'open' AND i.early_ping_at <= ? AND i.due_at > ?
        ORDER BY i.due_at`,
+      now, now,
     )
-    .all(now, now)
-    .map(toDueItem);
+  ).map(toDueItem);
 }
 
 // Important items of Mom or Dad that used up every ping without a Done, and the admin was not told yet.
-export function findUnanswered(db: DatabaseSync, now: number, repeatMs: number, maxPings: number): DueItem[] {
-  return db
-    .prepare(
+export async function findUnanswered(db: Db, now: number, repeatMs: number, maxPings: number): Promise<DueItem[]> {
+  return (
+    await rows(
+      db,
       `${DUE_SELECT}
        WHERE i.status = 'open' AND i.important = 1 AND i.ping_count >= ? AND i.last_pinged_at <= ?
          AND i.alerted_at IS NULL AND m.role != 'admin'
        ORDER BY i.due_at`,
+      maxPings, now - repeatMs,
     )
-    .all(maxPings, now - repeatMs)
-    .map(toDueItem);
+  ).map(toDueItem);
 }
 
-export function markAlerted(db: DatabaseSync, id: number, now: number): void {
-  db.prepare('UPDATE items SET alerted_at = ? WHERE id = ?').run(now, id);
+export async function markAlerted(db: Db, id: number, now: number): Promise<void> {
+  await run(db, 'UPDATE items SET alerted_at = ? WHERE id = ?', now, id);
 }
 
 // Editing starts the reminders over for the new time.
-export function updateItem(db: DatabaseSync, id: number, changes: ItemChanges): void {
-  db.prepare(
+export async function updateItem(db: Db, id: number, changes: ItemChanges): Promise<void> {
+  await run(
+    db,
     `UPDATE items SET title = ?, due_at = ?, important = ?, early_ping_at = ?,
        ping_count = 0, last_pinged_at = NULL, alerted_at = NULL
      WHERE id = ?`,
-  ).run(changes.title, changes.dueAt, changes.important ? 1 : 0, changes.earlyPingAt, id);
+    changes.title, changes.dueAt, changes.important ? 1 : 0, changes.earlyPingAt, id,
+  );
 }
 
-export function deleteItem(db: DatabaseSync, id: number): void {
-  db.prepare('DELETE FROM items WHERE id = ?').run(id);
+export async function deleteItem(db: Db, id: number): Promise<void> {
+  await run(db, 'DELETE FROM items WHERE id = ?', id);
 }
 
-export function markEarlySent(db: DatabaseSync, id: number): void {
-  db.prepare('UPDATE items SET early_ping_at = NULL WHERE id = ?').run(id);
+export async function markEarlySent(db: Db, id: number): Promise<void> {
+  await run(db, 'UPDATE items SET early_ping_at = NULL WHERE id = ?', id);
 }
 
-export function reopen(db: DatabaseSync, id: number): void {
-  db.prepare(`UPDATE items SET status = 'open', done_at = NULL WHERE id = ?`).run(id);
+export async function reopen(db: Db, id: number): Promise<void> {
+  await run(db, `UPDATE items SET status = 'open', done_at = NULL WHERE id = ?`, id);
 }
 
-export function markDone(db: DatabaseSync, id: number, now = Date.now()): void {
-  db.prepare(`UPDATE items SET status = 'done', done_at = ? WHERE id = ? AND status = 'open'`).run(now, id);
+export async function markDone(db: Db, id: number, now = Date.now()): Promise<void> {
+  await run(db, `UPDATE items SET status = 'done', done_at = ? WHERE id = ? AND status = 'open'`, now, id);
 }

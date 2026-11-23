@@ -9,8 +9,8 @@ const ADMIN = 3;
 const MOM = 1;
 const DAD = 2;
 
-const db = openDb(':memory:');
-syncMembers(db, [
+const db = await openDb(':memory:');
+await syncMembers(db, [
   { name: 'Admin', role: 'admin', telegramId: ADMIN },
   { name: 'Mom', role: 'member', telegramId: MOM },
   { name: 'Dad', role: 'member', telegramId: DAD },

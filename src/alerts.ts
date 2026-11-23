@@ -1,6 +1,6 @@
 import { InlineKeyboard, type Bot } from 'grammy';
-import type { DatabaseSync } from 'node:sqlite';
 import type { Ctx } from './bot.ts';
+import { first, rows, run, type Db } from './db.ts';
 import type { PingApi } from './scheduler.ts';
 import { formatTime, yangonParts } from './time.ts';
 import { fetchReport, formatReport } from './weather-report.ts';
@@ -55,53 +55,51 @@ CREATE TABLE IF NOT EXISTS sent_alerts (
 );
 `;
 
-export function initAlertTables(db: DatabaseSync): void {
-  db.exec(SCHEMA);
+export async function initAlertTables(db: Db): Promise<void> {
+  await db.executeMultiple(SCHEMA);
 }
 
-export function listSubscriptions(db: DatabaseSync, memberId: number): AlertKind[] {
-  return db
-    .prepare('SELECT kind FROM alert_subscriptions WHERE member_id = ?')
-    .all(memberId)
-    .map((r) => r.kind as AlertKind);
+export async function listSubscriptions(db: Db, memberId: number): Promise<AlertKind[]> {
+  return (await rows(db, 'SELECT kind FROM alert_subscriptions WHERE member_id = ?', memberId)).map((r) => r.kind as AlertKind);
 }
 
 // Returns true if the member is now subscribed.
-export function toggleSubscription(db: DatabaseSync, memberId: number, kind: AlertKind): boolean {
-  const removed = db.prepare('DELETE FROM alert_subscriptions WHERE member_id = ? AND kind = ?').run(memberId, kind);
-  if (Number(removed.changes) > 0) return false;
-  db.prepare('INSERT INTO alert_subscriptions (member_id, kind) VALUES (?, ?)').run(memberId, kind);
+export async function toggleSubscription(db: Db, memberId: number, kind: AlertKind): Promise<boolean> {
+  const removed = await run(db, 'DELETE FROM alert_subscriptions WHERE member_id = ? AND kind = ?', memberId, kind);
+  if (removed.rowsAffected > 0) return false;
+  // OR IGNORE: a quick double tap must not fail on the primary key.
+  await run(db, 'INSERT OR IGNORE INTO alert_subscriptions (member_id, kind) VALUES (?, ?)', memberId, kind);
   return true;
 }
 
 // Telegram IDs of active members subscribed to a kind.
-export function listSubscribers(db: DatabaseSync, kind: AlertKind): number[] {
-  return db
-    .prepare(
+export async function listSubscribers(db: Db, kind: AlertKind): Promise<number[]> {
+  return (
+    await rows(
+      db,
       `SELECT m.telegram_id FROM alert_subscriptions s JOIN members m ON m.id = s.member_id
        WHERE s.kind = ? AND m.telegram_id IS NOT NULL ORDER BY m.id`,
+      kind,
     )
-    .all(kind)
-    .map((r) => Number(r.telegram_id));
+  ).map((r) => Number(r.telegram_id));
 }
 
-export const wasSent = (db: DatabaseSync, key: string): boolean =>
-  db.prepare('SELECT 1 FROM sent_alerts WHERE key = ?').get(key) !== undefined;
+export const wasSent = async (db: Db, key: string): Promise<boolean> =>
+  (await first(db, 'SELECT 1 FROM sent_alerts WHERE key = ?', key)) !== undefined;
 
-export function markSent(db: DatabaseSync, key: string, now: number): void {
-  db.prepare('INSERT OR IGNORE INTO sent_alerts (key, sent_at) VALUES (?, ?)').run(key, now);
+export async function markSent(db: Db, key: string, now: number): Promise<void> {
+  await run(db, 'INSERT OR IGNORE INTO sent_alerts (key, sent_at) VALUES (?, ?)', key, now);
 }
 
-const pruneSent = (db: DatabaseSync, now: number) =>
-  db.prepare('DELETE FROM sent_alerts WHERE sent_at < ?').run(now - KEEP_SENT_MS);
+const pruneSent = (db: Db, now: number) => run(db, 'DELETE FROM sent_alerts WHERE sent_at < ?', now - KEEP_SENT_MS);
 
-const hasSubscribers = (db: DatabaseSync, kind: AlertKind) => listSubscribers(db, kind).length > 0;
+const hasSubscribers = async (db: Db, kind: AlertKind) => (await listSubscribers(db, kind)).length > 0;
 
 // At most one rain alert per part of the day (morning / afternoon / evening).
 const dayPart = (hour: number) => (hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening');
 
-function alertKeyboard(db: DatabaseSync, memberId: number): InlineKeyboard {
-  const on = listSubscriptions(db, memberId);
+async function alertKeyboard(db: Db, memberId: number): Promise<InlineKeyboard> {
+  const on = await listSubscriptions(db, memberId);
   return ALERT_KINDS.reduce(
     (kb, kind) => kb.text(`${A.labels[kind]}: ${on.includes(kind) ? A.on : A.off}`, `al:${kind}`).row(),
     new InlineKeyboard(),
@@ -109,42 +107,42 @@ function alertKeyboard(db: DatabaseSync, memberId: number): InlineKeyboard {
 }
 
 // Call between createBot() and finishBot().
-export function registerAlertCommands(bot: Bot<Ctx>, db: DatabaseSync): void {
-  bot.command('alerts', (ctx) => ctx.reply(A.intro, { reply_markup: alertKeyboard(db, ctx.member.id) }));
+export function registerAlertCommands(bot: Bot<Ctx>, db: Db): void {
+  bot.command('alerts', async (ctx) => ctx.reply(A.intro, { reply_markup: await alertKeyboard(db, ctx.member.id) }));
   bot.callbackQuery(/^al:(rain|daily|quake)$/, async (ctx) => {
-    toggleSubscription(db, ctx.member.id, ctx.match[1] as AlertKind);
-    await ctx.editMessageReplyMarkup({ reply_markup: alertKeyboard(db, ctx.member.id) });
+    await toggleSubscription(db, ctx.member.id, ctx.match[1] as AlertKind);
+    await ctx.editMessageReplyMarkup({ reply_markup: await alertKeyboard(db, ctx.member.id) });
   });
 }
 
 // Sends to every subscriber once, then records the key. Failed sends are logged, not retried,
 // so one blocked chat does not resend the whole batch every pass.
 async function broadcast(
-  db: DatabaseSync,
+  db: Db,
   api: PingApi,
   kind: AlertKind,
   key: string,
   text: string,
   now: number,
 ): Promise<void> {
-  for (const chatId of listSubscribers(db, kind)) {
+  for (const chatId of await listSubscribers(db, kind)) {
     try {
       await api.sendMessage(chatId, text);
     } catch (err: unknown) {
       console.error(`Alert ${key} failed for chat ${chatId}`, err);
     }
   }
-  markSent(db, key, now);
+  await markSent(db, key, now);
 }
 
 export async function runWeatherPass(
-  db: DatabaseSync,
+  db: Db,
   api: PingApi,
   home: Home,
   now: number,
   fetchFn: FetchFn,
 ): Promise<void> {
-  pruneSent(db, now);
+  await pruneSent(db, now);
   const { date, time } = yangonParts(now);
   const hour = Number(time.slice(0, 2));
   // ponytail: daily also waits for daytime, so a late-night restart does not send "today" at 23:00.
@@ -152,8 +150,8 @@ export async function runWeatherPass(
   const rainKey = `rain:${date}:${dayPart(hour)}`;
   const dailyKey = `daily:${date}`;
   // Nothing is fetched for an alert nobody has turned on.
-  const wantRain = !quiet && hasSubscribers(db, 'rain') && !wasSent(db, rainKey);
-  const wantDaily = !quiet && hour >= DAILY_HOUR && hasSubscribers(db, 'daily') && !wasSent(db, dailyKey);
+  const wantRain = !quiet && (await hasSubscribers(db, 'rain')) && !(await wasSent(db, rainKey));
+  const wantDaily = !quiet && hour >= DAILY_HOUR && (await hasSubscribers(db, 'daily')) && !(await wasSent(db, dailyKey));
 
   if (wantRain) {
     try {
@@ -173,13 +171,13 @@ export async function runWeatherPass(
 }
 
 export async function runQuakePass(
-  db: DatabaseSync,
+  db: Db,
   api: PingApi,
   home: Home,
   now: number,
   fetchFn: FetchFn,
 ): Promise<void> {
-  if (!hasSubscribers(db, 'quake')) return;
+  if (!(await hasSubscribers(db, 'quake'))) return;
   let quakes;
   try {
     quakes = await fetchQuakes(fetchFn);
@@ -189,7 +187,7 @@ export async function runQuakePass(
   }
   for (const q of nearbyRecentQuakes(quakes, home, now)) {
     const key = `quake:${q.id}`;
-    if (wasSent(db, key)) continue;
+    if (await wasSent(db, key)) continue;
     const text = A.quake(q.magnitude.toFixed(1), Math.round(distanceKm(home, q)), q.place, formatTime(q.timeMs));
     await broadcast(db, api, 'quake', key, text, now);
   }
@@ -214,7 +212,7 @@ function every(ms: number, name: string, pass: (now: number) => Promise<void>): 
   return () => clearInterval(timer);
 }
 
-export function startAlerts(db: DatabaseSync, api: PingApi, home: Home, fetchFn: FetchFn = fetch): () => void {
+export function startAlerts(db: Db, api: PingApi, home: Home, fetchFn: FetchFn = fetch): () => void {
   const stopWeather = every(WEATHER_INTERVAL_MS, 'Weather', (now) => runWeatherPass(db, api, home, now, fetchFn));
   const stopQuakes = every(QUAKE_INTERVAL_MS, 'Quake', (now) => runQuakePass(db, api, home, now, fetchFn));
   return () => {

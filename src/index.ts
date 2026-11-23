@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ALERT_COMMANDS, initAlertTables, registerAlertCommands, startAlerts } from './alerts.ts';
 import { createApiServer } from './api.ts';
 import { createBot, finishBot } from './bot.ts';
@@ -54,12 +55,17 @@ function readHome(): Home | null {
   return { lat: round2(lat), lon: round2(lon) };
 }
 
-// Relative paths resolve from the project folder, not from wherever the bot was started.
-const dbPath = resolve(import.meta.dirname, '..', process.env.DB_PATH || 'data/family.db');
-mkdirSync(dirname(dbPath), { recursive: true });
-const db = openDb(dbPath);
-syncMembers(db, readMembers());
-initAlertTables(db);
+// Turso in production; otherwise a local file. Relative paths resolve from the project folder.
+function dbUrl(): string {
+  if (process.env.TURSO_DATABASE_URL) return process.env.TURSO_DATABASE_URL;
+  const path = resolve(import.meta.dirname, '..', process.env.DB_PATH || 'data/family.db');
+  mkdirSync(dirname(path), { recursive: true });
+  return pathToFileURL(path).href;
+}
+
+const db = await openDb(dbUrl(), process.env.TURSO_AUTH_TOKEN);
+await syncMembers(db, readMembers());
+await initAlertTables(db);
 const home = readHome();
 
 const bot = createBot(token, db, webAppUrl.startsWith('https://') ? webAppUrl : null);

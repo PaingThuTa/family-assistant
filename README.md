@@ -30,8 +30,8 @@ The bot nudges each person until the task is done. Everyone can see the family's
 ## Tech stack
 
 - **Node.js 22.18+**, running TypeScript directly with no build step
-- **SQLite** through the built-in `node:sqlite`
-- **[grammY](https://grammy.dev)** for the Telegram bot, the only runtime dependency
+- **SQLite** through [`@libsql/client`](https://github.com/tursodatabase/libsql-client-ts): a local file in development, [Turso](https://turso.tech) in production
+- **[grammY](https://grammy.dev)** for the Telegram bot
 - **Plain HTML, CSS and JavaScript** for the Mini App, with no framework
 - **`node:test`** for tests
 
@@ -77,6 +77,7 @@ Put the printed `https://...trycloudflare.com` link in `.env` as `WEBAPP_URL` an
 | `WEBAPP_URL` | no | Public HTTPS address of this server, for the Mini App button |
 | `PORT` | no | HTTP port for the Mini App (default `3000`) |
 | `DB_PATH` | no | SQLite file (default `data/family.db`) |
+| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | no | Use a Turso database instead of the local file (production) |
 | `HOME_LAT`, `HOME_LON` | no | Home location for weather and earthquake alerts. Rounded to about 1 km before it is sent to Open-Meteo. Alerts are off if unset. |
 
 Reminder timing (the 30-second check, 5-minute repeats and 6 pings) is set in `src/index.ts`. The 10-minute heads-up is set in `src/scheduler.ts`.
@@ -136,9 +137,15 @@ Tapping Done anywhere, in a ping or in the Mini App, stops everything for that t
 - Every Mini App request is checked against Telegram's signed login data, using the bot token.
 - Only Telegram IDs listed in `.env` can use the bot or the API.
 - All user text is rendered as plain text, never as HTML.
-- Family data stays in one local SQLite file. `.env` and `data/` are git-ignored.
-- Only city-level coordinates (rounded to about 1 km) are sent to the weather service. Nothing else leaves the server except Telegram messages.
+- Family data stays in one SQLite database: a local file, or your own Turso database in production. `.env` and `data/` are git-ignored.
+- Only city-level coordinates (rounded to about 1 km) are sent to the weather service. Apart from the database, nothing else leaves the server except Telegram messages.
 
 ## Deployment
 
-The bot must run all the time for reminders to arrive. Running it on your laptop is fine for testing. For real use, run it on a small always-on server, for example a VPS in Singapore for families in Myanmar. Use a process manager such as systemd or pm2 so it restarts after crashes, and back up `data/family.db`.
+The bot must run all the time for reminders to arrive. The free setup is a Render web service plus a Turso database:
+
+1. Create a Turso database, then copy its URL (`libsql://...`) and an auth token.
+2. Create a Render **Web Service** from this repo: build `npm ci --omit=dev`, start `npm start`. Add the variables from `.env.example`: set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`, and set `WEBAPP_URL` to the service's `https://<name>.onrender.com` address. Leave `PORT` unset; Render provides it.
+3. Render's free plan sleeps after 15 minutes without web traffic, which would stop reminders. Point a free uptime monitor (for example UptimeRobot) at the service URL every 5 minutes to keep it awake.
+
+Every push to `main` redeploys. Render's disk is wiped on each deploy, which is why the data lives in Turso.

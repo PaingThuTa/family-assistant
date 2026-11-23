@@ -1,5 +1,4 @@
 import { GrammyError, type Api } from 'grammy';
-import type { DatabaseSync } from 'node:sqlite';
 import {
   findDueForPing,
   findEarlyDue,
@@ -8,6 +7,7 @@ import {
   markAlerted,
   markEarlySent,
   markPinged,
+  type Db,
   type DueItem,
 } from './db.ts';
 import { doneKeyboard } from './keyboards.ts';
@@ -36,24 +36,24 @@ const isPermanent = (err: unknown) =>
 
 // Sends one message and records it. Network/server errors are left unrecorded so the next pass
 // retries; permanent errors are recorded so they are not retried every 30 seconds.
-async function send(api: PingApi, chatId: number, item: DueItem, text: string, record: () => void): Promise<void> {
+async function send(api: PingApi, chatId: number, item: DueItem, text: string, record: () => Promise<void>): Promise<void> {
   try {
     await api.sendMessage(chatId, text, { reply_markup: doneKeyboard(item.id) });
-    record();
+    await record();
   } catch (err: unknown) {
     console.error(`Ping failed for item ${item.id}`, err);
-    if (isPermanent(err)) record();
+    if (isPermanent(err)) await record();
   }
 }
 
 // Tells the admin about important items that got every ping and still no Done.
-async function alertAdmin(db: DatabaseSync, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
-  const unanswered = findUnanswered(db, now, opts.repeatMs, opts.maxPings);
+async function alertAdmin(db: Db, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
+  const unanswered = await findUnanswered(db, now, opts.repeatMs, opts.maxPings);
   if (unanswered.length === 0) return;
-  const admin = listActiveMembers(db).find((m) => m.role === 'admin');
+  const admin = (await listActiveMembers(db)).find((m) => m.role === 'admin');
   for (const item of unanswered) {
     if (!admin?.telegramId) {
-      markAlerted(db, item.id, now); // nobody to tell; don't re-check it every pass
+      await markAlerted(db, item.id, now); // nobody to tell; don't re-check it every pass
       continue;
     }
     const text = S.unanswered(S.names[item.ownerName] ?? item.ownerName, item.title, formatTime(item.dueAt));
@@ -62,19 +62,19 @@ async function alertAdmin(db: DatabaseSync, api: PingApi, opts: SchedulerOptions
 }
 
 // One pass: heads-up pings, then on-time and repeat pings, then alerts for unanswered ones.
-export async function pingDue(db: DatabaseSync, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
-  for (const item of findEarlyDue(db, now)) {
+export async function pingDue(db: Db, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
+  for (const item of await findEarlyDue(db, now)) {
     const text = S.early(EARLY_MINUTES, item.title, formatTime(item.dueAt));
     await send(api, item.ownerTelegramId, item, text, () => markEarlySent(db, item.id));
   }
-  for (const item of findDueForPing(db, now, opts.repeatMs, opts.maxPings)) {
+  for (const item of await findDueForPing(db, now, opts.repeatMs, opts.maxPings)) {
     await send(api, item.ownerTelegramId, item, S.ping(item.title), () => markPinged(db, item.id, now));
   }
   await alertAdmin(db, api, opts, now);
 }
 
 // Runs pingDue on an interval. Returns a stop function.
-export function startScheduler(db: DatabaseSync, api: PingApi, opts: SchedulerOptions): () => void {
+export function startScheduler(db: Db, api: PingApi, opts: SchedulerOptions): () => void {
   let running = false;
 
   const tick = async () => {

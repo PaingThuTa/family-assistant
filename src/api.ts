@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
 import { verifyInitData } from './auth.ts';
 import { HttpError, readJson } from './http.ts';
 import { routeNotes } from './notes-api.ts';
@@ -16,6 +15,7 @@ import {
   markDone,
   reopen,
   updateItem,
+  type Db,
   type Item,
   type Member,
 } from './db.ts';
@@ -107,42 +107,42 @@ function futureDueAt(fields: ItemFields, now: number): number {
 }
 
 // HTTP server for the Mini App: static files plus a JSON API that only family members can use.
-export function createApiServer(db: DatabaseSync, botToken: string, publicDir: string): Server {
-  const authenticate = (req: IncomingMessage): Member => {
+export function createApiServer(db: Db, botToken: string, publicDir: string): Server {
+  const authenticate = async (req: IncomingMessage): Promise<Member> => {
     const header = req.headers.authorization ?? '';
     const telegramId = header.startsWith('tma ') ? verifyInitData(header.slice(4), botToken) : null;
-    const member = telegramId === null ? undefined : findMemberByTelegramId(db, telegramId);
+    const member = telegramId === null ? undefined : await findMemberByTelegramId(db, telegramId);
     if (!member) throw new HttpError(401, S.web.unauthorized);
     return member;
   };
 
-  const itemsFor = (ownerId: number, range: keyof typeof RANGES, me: Member, now: number) => {
+  const itemsFor = async (ownerId: number, range: keyof typeof RANGES, me: Member, now: number) => {
     const [fromDay, toDay] = RANGES[range];
     const from = yangonTime(fromDay, 0, 0, now);
     const to = yangonTime(toDay, 0, 0, now);
     // Ranges starting today also carry over unfinished items from earlier days.
-    return listItems(db, ownerId, from, to, fromDay === 0).map((item) => publicItem(item, me, now));
+    return (await listItems(db, ownerId, from, to, fromDay === 0)).map((item) => publicItem(item, me, now));
   };
 
   // Also returns the first screen's list, so opening the app takes one request instead of two.
-  const getMe = (me: Member, now: number) => {
+  const getMe = async (me: Member, now: number) => {
     // Mom and Dad see each other; the admin also sees their own tab.
-    const members = listActiveMembers(db).filter((m) => m.role === 'member' || m.id === me.id);
+    const members = (await listActiveMembers(db)).filter((m) => m.role === 'member' || m.id === me.id);
     // Admin starts on Mom's timeline, everyone else on their own.
     const ownerId = me.role === 'admin' ? (members.find((m) => m.role === 'member') ?? me).id : me.id;
     return {
       me: publicMember(me),
       members: members.map(publicMember),
       ownerId,
-      items: itemsFor(ownerId, 'today', me, now),
+      items: await itemsFor(ownerId, 'today', me, now),
       today: yangonDateString(0, now),
       tomorrow: yangonDateString(1, now),
     };
   };
 
   // Either ?range=today|tomorrow|week, or ?from=YYYY-MM-DD&to=YYYY-MM-DD (to is exclusive) for the calendar.
-  const getItems = (url: URL, me: Member, now: number) => {
-    const owner = findMember(db, Number(url.searchParams.get('owner')));
+  const getItems = async (url: URL, me: Member, now: number) => {
+    const owner = await findMember(db, Number(url.searchParams.get('owner')));
     if (!owner) throw new HttpError(400, S.web.error);
     const range = url.searchParams.get('range');
     if (range !== null) {
@@ -152,49 +152,49 @@ export function createApiServer(db: DatabaseSync, botToken: string, publicDir: s
     const from = parseYangonDateTime(url.searchParams.get('from') ?? '', '00:00');
     const to = parseYangonDateTime(url.searchParams.get('to') ?? '', '00:00');
     if (from === null || to === null || to <= from || to - from > MAX_SPAN_MS) throw new HttpError(400, S.web.error);
-    return listItems(db, owner.id, from, to, false).map((item) => publicItem(item, me, now));
+    return (await listItems(db, owner.id, from, to, false)).map((item) => publicItem(item, me, now));
   };
 
-  const editableItem = (itemId: number, me: Member): Item => {
-    const item = findItem(db, itemId);
+  const editableItem = async (itemId: number, me: Member): Promise<Item> => {
+    const item = await findItem(db, itemId);
     if (!item) throw new HttpError(404, S.web.notFound);
     if (!canEdit(me, item.ownerId)) throw new HttpError(403, S.notAllowed);
     return item;
   };
 
   const putItem = async (req: IncomingMessage, itemId: number, me: Member, now: number) => {
-    const item = editableItem(itemId, me);
+    const item = await editableItem(itemId, me);
     const fields = parseFields(await readJson(req));
     const dueAt = futureDueAt(fields, now);
-    updateItem(db, item.id, { title: fields.title, dueAt, important: fields.important, earlyPingAt: earlyPingFor(dueAt, now) });
-    return publicItem(findItem(db, item.id)!, me, now);
+    await updateItem(db, item.id, { title: fields.title, dueAt, important: fields.important, earlyPingAt: earlyPingFor(dueAt, now) });
+    return publicItem((await findItem(db, item.id))!, me, now);
   };
 
-  const removeItem = (itemId: number, me: Member) => {
-    deleteItem(db, editableItem(itemId, me).id);
+  const removeItem = async (itemId: number, me: Member) => {
+    await deleteItem(db, (await editableItem(itemId, me)).id);
     return { id: itemId };
   };
 
   const postItem = async (req: IncomingMessage, me: Member, now: number) => {
     const input = parseNewItem(await readJson(req));
-    const owner = findMember(db, input.ownerId);
+    const owner = await findMember(db, input.ownerId);
     if (!owner) throw new HttpError(404, S.web.notFound);
     if (!canEdit(me, owner.id)) throw new HttpError(403, S.notAllowed);
     const dueAt = futureDueAt(input, now);
-    const id = createItem(
+    const id = await createItem(
       db,
       { ownerId: owner.id, createdById: me.id, title: input.title, dueAt, important: input.important, earlyPingAt: earlyPingFor(dueAt, now) },
       now,
     );
-    return publicItem(findItem(db, id)!, me, now);
+    return publicItem((await findItem(db, id))!, me, now);
   };
 
   // Done, or reopen to undo an accidental Done. Either way only the owner or admin may.
-  const postStatus = (itemId: number, action: 'done' | 'reopen', me: Member, now: number) => {
-    const item = editableItem(itemId, me);
-    if (action === 'done') markDone(db, item.id, now);
-    else reopen(db, item.id);
-    return publicItem(findItem(db, item.id)!, me, now);
+  const postStatus = async (itemId: number, action: 'done' | 'reopen', me: Member, now: number) => {
+    const item = await editableItem(itemId, me);
+    if (action === 'done') await markDone(db, item.id, now);
+    else await reopen(db, item.id);
+    return publicItem((await findItem(db, item.id))!, me, now);
   };
 
   const route = async (req: IncomingMessage, url: URL, me: Member): Promise<unknown> => {
@@ -223,7 +223,7 @@ export function createApiServer(db: DatabaseSync, botToken: string, publicDir: s
         return;
       }
       if (!url.pathname.startsWith('/api/')) throw new HttpError(404, S.web.notFound);
-      const me = authenticate(req);
+      const me = await authenticate(req);
       sendJson(res, 200, { success: true, data: await route(req, url, me), error: null });
     } catch (err: unknown) {
       const status = err instanceof HttpError ? err.status : 500;
