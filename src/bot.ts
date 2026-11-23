@@ -24,7 +24,10 @@ export function createBot(token: string, db: Db, webAppUrl: string | null): Bot<
   bot.use(async (ctx, next) => {
     // Private chats only: in a group, buttons would get mixed up between people.
     if (!ctx.from || ctx.chat?.type !== 'private') return;
-    const member = await findMemberByTelegramId(db, ctx.from.id);
+    // "typing..." while the reply is prepared (weather and the database can take a moment). It runs alongside the
+    // member lookup but always lands before the reply; a late one would show "typing" after the answer.
+    const typing = ctx.message ? ctx.replyWithChatAction('typing').catch(() => {}) : undefined;
+    const [member] = await Promise.all([findMemberByTelegramId(db, ctx.from.id), typing]);
     if (!member) {
       await ctx.reply(S.notMember(ctx.from.id));
       return;

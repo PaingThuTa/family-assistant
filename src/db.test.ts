@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { createItem, findDueForPing, findMemberByTelegramId, markDone, markPinged, openDb, rows, syncMembers } from './db.ts';
+import { createItem, findDueForPing, findEarlyDue, findMemberByTelegramId, findUnanswered, markDone, markPinged, openDb, rows, syncMembers } from './db.ts';
 import { addNoteItem, createNote, deleteNote } from './notes-db.ts';
 
 const NOW = 1_000_000_000;
@@ -98,4 +98,17 @@ test('deleting a note also deletes its lines', async () => {
   await addNoteItem(db, noteId, 'rice', NOW);
   await deleteNote(db, noteId);
   assert.deepEqual(await rows(db, 'SELECT * FROM note_items'), []);
+});
+
+test('a locked-out member (no Telegram ID) is never pinged', async () => {
+  const { db, mom, dueIds } = await setup();
+  const add = (dueAt: number, earlyPingAt: number | null) =>
+    createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'rice', dueAt, important: true, earlyPingAt });
+  await add(NOW - 1, null); // due now
+  await add(NOW + 60_000, NOW - 1); // heads-up due now
+  await markPinged(db, await add(NOW - REPEAT, null), NOW - REPEAT); // used up its single ping
+  const counts = async () => [(await dueIds()).length, (await findEarlyDue(db, NOW)).length, (await findUnanswered(db, NOW, REPEAT, 1)).length];
+  assert.deepEqual(await counts(), [2, 1, 1]);
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: null }]);
+  assert.deepEqual(await counts(), [0, 0, 0]);
 });

@@ -103,8 +103,9 @@ async function migrate(db: Db): Promise<void> {
   }
 }
 
+// Only owners who can be messaged: a locked-out member (no Telegram ID) would be "pinged" at chat 0.
 const DUE_SELECT = `SELECT i.*, m.telegram_id AS owner_telegram_id, m.name AS owner_name
-  FROM items i JOIN members m ON m.id = i.owner_id`;
+  FROM items i JOIN members m ON m.id = i.owner_id AND m.telegram_id IS NOT NULL`;
 
 const toDueItem = (r: Row): DueItem => ({
   ...toItem(r),
@@ -112,10 +113,17 @@ const toDueItem = (r: Row): DueItem => ({
   ownerName: String(r.owner_name),
 });
 
-export async function openDb(url: string, authToken?: string): Promise<Db> {
-  const db = createClient({ url, authToken });
+// Connecting does no I/O. Tables are set up separately (setupDb), so a request never waits on it.
+export const connectDb = (url: string, authToken?: string): Db => createClient({ url, authToken });
+
+export async function setupDb(db: Db): Promise<void> {
   await db.executeMultiple(SCHEMA);
   await migrate(db);
+}
+
+export async function openDb(url: string, authToken?: string): Promise<Db> {
+  const db = connectDb(url, authToken);
+  await setupDb(db);
   return db;
 }
 
@@ -164,11 +172,11 @@ export async function createItem(db: Db, item: NewItem, now = Date.now()): Promi
 // For "What's next?": a few unfinished late items (oldest first) and the next upcoming one.
 // Two queries, so many late items can never hide the next one.
 export async function findWhatsNext(db: Db, ownerId: number, now: number, lateLimit: number): Promise<{ late: Item[]; next: Item | undefined }> {
-  const late = (
-    await rows(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT ?`, ownerId, now, lateLimit)
-  ).map(toItem);
-  const next = await first(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at > ? ORDER BY due_at LIMIT 1`, ownerId, now);
-  return { late, next: next ? toItem(next) : undefined };
+  const [late, next] = await Promise.all([
+    rows(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT ?`, ownerId, now, lateLimit),
+    first(db, `SELECT * FROM items WHERE owner_id = ? AND status = 'open' AND due_at > ? ORDER BY due_at LIMIT 1`, ownerId, now),
+  ]);
+  return { late: late.map(toItem), next: next ? toItem(next) : undefined };
 }
 
 export async function findItem(db: Db, id: number): Promise<Item | undefined> {

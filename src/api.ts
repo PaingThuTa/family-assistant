@@ -26,7 +26,8 @@ const RANGES = { today: [0, 1], tomorrow: [1, 2], week: [0, 7] } as const;
 const MAX_SPAN_MS = 62 * 24 * 60 * 60_000; // the calendar asks for one month at a time
 
 // Static files in public/ are served by Cloudflare before the Worker runs; their headers are in public/_headers.
-const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff' };
+// no-store: schedules and notes are private, so WebViews and proxies must not cache them.
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' };
 
 interface ApiResponse<T> {
   success: boolean;

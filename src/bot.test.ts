@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { nextReply } from './bot.ts';
+import { createBot, nextReply } from './bot.ts';
 import { createItem, findMemberByTelegramId, findWhatsNext, openDb, syncMembers, type Item } from './db.ts';
+import { S } from './strings.ts';
 
 const NOW = Date.UTC(2026, 10, 20, 3, 0); // 09:30 in Yangon
 const item = (id: number, title: string, dueAt: number): Item => ({
@@ -37,4 +38,19 @@ test('11 late tasks do not hide the next upcoming one (review bug)', async () =>
   assert.equal(late.length, 3);
   assert.equal(next?.id, nextId);
   assert.match(nextReply(late, next, NOW).text, /နောက်တစ်ခု: upcoming/);
+});
+
+test('"typing..." is shown before the reply, so a slow answer does not look like nothing happened', async () => {
+  const db = await openDb(':memory:');
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 1 }]);
+  const bot = createBot('1:x', db, null);
+  bot.botInfo = { id: 9, is_bot: true, first_name: 'bot', username: 'bot' } as typeof bot.botInfo;
+  const calls: string[] = [];
+  bot.api.config.use(async (_prev, method) => {
+    calls.push(method);
+    return { ok: true, result: true } as never;
+  });
+  const message = { message_id: 1, date: 0, chat: { id: 1, type: 'private' as const, first_name: 'Mom' }, from: { id: 1, is_bot: false, first_name: 'Mom' } };
+  await bot.handleUpdate({ update_id: 1, message: { ...message, text: S.nextButton } });
+  assert.deepEqual(calls, ['sendChatAction', 'sendMessage']);
 });
