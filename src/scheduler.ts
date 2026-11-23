@@ -1,7 +1,9 @@
 import { GrammyError, type Api } from 'grammy';
 import {
+  createNextOccurrence,
   findDueForPing,
   findEarlyDue,
+  findRepeatsDue,
   findUnanswered,
   listActiveMembers,
   markAlerted,
@@ -60,8 +62,25 @@ async function alertAdmin(db: Db, api: PingApi, opts: SchedulerOptions, now: num
   }
 }
 
-// One pass: heads-up pings, then on-time and repeat pings, then alerts for unanswered ones.
+const DAY_MS = 24 * 60 * 60_000;
+
+// The next time after now, so days the bot was down are skipped instead of piling up.
+const nextDue = (dueAt: number, repeatDays: number, now: number): number => {
+  const period = repeatDays * DAY_MS;
+  return dueAt + (Math.floor((now - dueAt) / period) + 1) * period;
+};
+
+// A repeating item makes its next occurrence when it comes due, Done or not.
+async function createRepeats(db: Db, now: number): Promise<void> {
+  for (const item of await findRepeatsDue(db, now)) {
+    const dueAt = nextDue(item.dueAt, item.repeatDays!, now);
+    await createNextOccurrence(db, item.id, dueAt, earlyPingFor(dueAt, now), now);
+  }
+}
+
+// One pass: next occurrences of repeating items, heads-up pings, on-time and repeat pings, then alerts.
 export async function pingDue(db: Db, api: PingApi, opts: SchedulerOptions, now: number): Promise<void> {
+  await createRepeats(db, now);
   for (const item of await findEarlyDue(db, now)) {
     const text = S.early(EARLY_MINUTES, item.title, formatTime(item.dueAt));
     await send(api, item.ownerTelegramId, item, text, () => markEarlySent(db, item.id));

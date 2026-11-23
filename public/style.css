@@ -353,6 +353,12 @@ label {
   color: var(--muted);
 }
 
+/* A label above a row of buttons (not a form control, so not a <label>). */
+.field-label {
+  margin-bottom: -10px;
+  color: var(--muted);
+}
+
 input,
 select {
   padding: 12px;

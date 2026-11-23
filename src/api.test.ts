@@ -131,3 +131,15 @@ test('calendar month listing returns items in the date range only', async () => 
   assert.equal((await call(`/api/items?owner=${momId}&from=bad&to=2099-04-01`, MOM)).status, 400);
   assert.ok(me.success);
 });
+
+test('repeat can be set, shown, changed and validated', async () => {
+  const { body: me } = await call('/api/me', MOM);
+  const fields = { ownerId: momId, title: 'clean room', date: me.data.tomorrow, time: '10:00', important: false };
+  const added = await call('/api/items', MOM, { ...fields, repeat: 'weekly' });
+  assert.equal(added.body.data.repeat, 'weekly');
+  assert.equal((await call('/api/items', MOM, { ...fields })).body.data.repeat, null); // older app: no field means no repeat
+  const id = added.body.data.id;
+  const edited = await send('PUT', `/api/items/${id}`, MOM, { ...fields, repeat: 'none' });
+  assert.equal(edited.body.data.repeat, null);
+  assert.equal((await call('/api/items', MOM, { ...fields, repeat: 'yearly' })).status, 400);
+});

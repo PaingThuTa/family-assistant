@@ -35,11 +35,16 @@ interface ApiResponse<T> {
   error: string | null;
 }
 
+// Repeat as the app sends it, and as days on the item.
+const REPEATS: Record<string, number | null> = { none: null, daily: 1, weekly: 7 };
+const repeatName = (days: number | null) => (days === 1 ? 'daily' : days === 7 ? 'weekly' : null);
+
 interface ItemFields {
   title: string;
   date: string;
   time: string;
   important: boolean;
+  repeatDays: number | null;
 }
 
 type NewItemInput = ItemFields & { ownerId: number };
@@ -62,6 +67,7 @@ const publicItem = (item: Item, me: Member, now: number) => ({
   date: yangonParts(item.dueAt).date,
   clock: yangonParts(item.dueAt).time,
   canEdit: canEdit(me, item.ownerId),
+  repeat: repeatName(item.repeatDays),
 });
 
 const json = <T>(status: number, body: ApiResponse<T>): Response =>
@@ -74,7 +80,10 @@ function parseFields(body: unknown): ItemFields {
   }
   const title = b.title.trim();
   if (title.length === 0 || title.length > MAX_TITLE) throw new HttpError(400, S.invalidTitle);
-  return { title, date: b.date, time: b.time, important: b.important };
+  // An app opened before repeats existed sends no repeat: treat it as none.
+  const repeat = b.repeat ?? 'none';
+  if (typeof repeat !== 'string' || !Object.hasOwn(REPEATS, repeat)) throw new HttpError(400, S.web.error);
+  return { title, date: b.date, time: b.time, important: b.important, repeatDays: REPEATS[repeat] ?? null };
 }
 
 function parseNewItem(body: unknown): NewItemInput {
@@ -151,7 +160,7 @@ export function createApiHandler(db: Db, botToken: string): (req: Request) => Pr
     const item = await editableItem(itemId, me);
     const fields = parseFields(await readJson(req));
     const dueAt = futureDueAt(fields, now);
-    await updateItem(db, item.id, { title: fields.title, dueAt, important: fields.important, earlyPingAt: earlyPingFor(dueAt, now) });
+    await updateItem(db, item.id, { title: fields.title, dueAt, important: fields.important, earlyPingAt: earlyPingFor(dueAt, now), repeatDays: fields.repeatDays });
     return publicItem((await findItem(db, item.id))!, me, now);
   };
 
@@ -168,7 +177,7 @@ export function createApiHandler(db: Db, botToken: string): (req: Request) => Pr
     const dueAt = futureDueAt(input, now);
     const id = await createItem(
       db,
-      { ownerId: owner.id, createdById: me.id, title: input.title, dueAt, important: input.important, earlyPingAt: earlyPingFor(dueAt, now) },
+      { ownerId: owner.id, createdById: me.id, title: input.title, dueAt, important: input.important, earlyPingAt: earlyPingFor(dueAt, now), repeatDays: input.repeatDays },
       now,
     );
     return publicItem((await findItem(db, id))!, me, now);

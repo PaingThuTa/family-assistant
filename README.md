@@ -12,6 +12,7 @@ The bot nudges each person until the task is done. Everyone can see the family's
 - **ရာသီဥတု (Weather):** a short message in plain words with weather emojis: today's date, sky and rain in words, the temperature now and the day's high, a UV and air-quality (PM2.5) line, which parts of the day may get rain, and what to do (hang the laundry or take an umbrella). Heat, strong sun and bad air get an extra advice line on days they matter. Ends with the next 3 days. Cached for 15 minutes.
 - **Pings with a Done button.** Important tasks repeat every 5 minutes until Done (up to 6 times).
 - **Heads-up 10 minutes before** each scheduled reminder.
+- **Repeating tasks:** daily or weekly (for example, cleaning every Saturday). The next one comes on schedule even if the last one wasn't marked Done.
 - **Admin alert:** if an important task gets every ping and no Done, the admin is told.
 - **Opt-in alerts (`/alerts`):** rain expected within about 2 hours (at most once per morning, afternoon and evening, and silent at night), the full weather report every day at 7:00 (the same message as the Weather button), and reports of nearby M4.5+ earthquakes. The earthquake alert comes from USGS a few minutes **after** a quake. It is a report, not an early warning.
 

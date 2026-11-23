@@ -17,11 +17,12 @@ export type Item = {
   pingCount: number;
   lastPingedAt: number | null;
   earlyPingAt: number | null; // when to send the heads-up ping; null = none or already sent
+  repeatDays: number | null; // 1 = daily, 7 = weekly; only the latest occurrence carries it
 };
 export type DueItem = Item & { ownerTelegramId: number; ownerName: string };
-export type ItemChanges = Pick<Item, 'title' | 'dueAt' | 'important' | 'earlyPingAt'>;
+export type ItemChanges = Pick<Item, 'title' | 'dueAt' | 'important' | 'earlyPingAt' | 'repeatDays'>;
 export type NewItem = Pick<Item, 'ownerId' | 'createdById' | 'title' | 'dueAt' | 'important'> &
-  Partial<Pick<Item, 'earlyPingAt'>>;
+  Partial<Pick<Item, 'earlyPingAt' | 'repeatDays'>>;
 
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS items (
   early_ping_at INTEGER,
   alerted_at INTEGER,
   last_pinged_at INTEGER,
+  repeat_days INTEGER,
   created_at INTEGER NOT NULL,
   done_at INTEGER
 );
@@ -91,10 +93,11 @@ const toItem = (r: Row): Item => ({
   pingCount: Number(r.ping_count),
   lastPingedAt: r.last_pinged_at == null ? null : Number(r.last_pinged_at),
   earlyPingAt: r.early_ping_at == null ? null : Number(r.early_ping_at),
+  repeatDays: r.repeat_days == null ? null : Number(r.repeat_days),
 });
 
 // ponytail: add-column-if-missing is enough for now; use a migrations table once there are several.
-const ADDED_COLUMNS = ['early_ping_at', 'alerted_at'];
+const ADDED_COLUMNS = ['early_ping_at', 'alerted_at', 'repeat_days'];
 
 async function migrate(db: Db): Promise<void> {
   const columns = (await rows(db, 'PRAGMA table_info(items)')).map((c) => String(c.name));
@@ -162,9 +165,9 @@ export async function listActiveMembers(db: Db): Promise<Member[]> {
 export async function createItem(db: Db, item: NewItem, now = Date.now()): Promise<number> {
   const result = await run(
     db,
-    `INSERT INTO items (owner_id, created_by_id, title, due_at, important, early_ping_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    item.ownerId, item.createdById, item.title, item.dueAt, item.important ? 1 : 0, item.earlyPingAt ?? null, now,
+    `INSERT INTO items (owner_id, created_by_id, title, due_at, important, early_ping_at, repeat_days, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    item.ownerId, item.createdById, item.title, item.dueAt, item.important ? 1 : 0, item.earlyPingAt ?? null, item.repeatDays ?? null, now,
   );
   return Number(result.lastInsertRowid);
 }
@@ -253,10 +256,10 @@ export async function markAlerted(db: Db, id: number, now: number): Promise<void
 export async function updateItem(db: Db, id: number, changes: ItemChanges): Promise<void> {
   await run(
     db,
-    `UPDATE items SET title = ?, due_at = ?, important = ?, early_ping_at = ?,
+    `UPDATE items SET title = ?, due_at = ?, important = ?, early_ping_at = ?, repeat_days = ?,
        ping_count = 0, last_pinged_at = NULL, alerted_at = NULL
      WHERE id = ?`,
-    changes.title, changes.dueAt, changes.important ? 1 : 0, changes.earlyPingAt, id,
+    changes.title, changes.dueAt, changes.important ? 1 : 0, changes.earlyPingAt, changes.repeatDays, id,
   );
 }
 
@@ -274,4 +277,25 @@ export async function reopen(db: Db, id: number): Promise<void> {
 
 export async function markDone(db: Db, id: number, now = Date.now()): Promise<void> {
   await run(db, `UPDATE items SET status = 'done', done_at = ? WHERE id = ? AND status = 'open'`, now, id);
+}
+
+// Repeating items whose time has come; each one hands its repeat on to a new occurrence.
+export async function findRepeatsDue(db: Db, now: number): Promise<Item[]> {
+  return (await rows(db, 'SELECT * FROM items WHERE repeat_days IS NOT NULL AND due_at <= ? ORDER BY due_at', now)).map(toItem);
+}
+
+// One transaction: copy the item to its next time and move the repeat onto the copy. The copy only happens
+// while the old one still carries the repeat, so a second run cannot make a duplicate.
+export async function createNextOccurrence(db: Db, id: number, dueAt: number, earlyPingAt: number | null, now: number): Promise<void> {
+  await db.batch(
+    [
+      {
+        sql: `INSERT INTO items (owner_id, created_by_id, title, due_at, important, early_ping_at, repeat_days, created_at)
+              SELECT owner_id, created_by_id, title, ?, important, ?, repeat_days, ? FROM items WHERE id = ? AND repeat_days IS NOT NULL`,
+        args: [dueAt, earlyPingAt, now, id],
+      },
+      { sql: 'UPDATE items SET repeat_days = NULL WHERE id = ?', args: [id] },
+    ],
+    'write',
+  );
 }

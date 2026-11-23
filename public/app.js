@@ -6,7 +6,7 @@ import { renderNotes } from './notes.js';
 const tg = window.Telegram?.WebApp;
 
 const T = {
-  names: { Mom: 'မေမေ', Dad: 'ဖေဖေ', Brother: 'ညီလေး', Admin: 'Admin' },
+  names: { Mom: 'မေမေ', Dad: 'ဖေဖေ', Brother: 'ညီလေး', Admin: 'ကိုကို' },
   done: 'ပြီးပြီ',
   undo: 'ပြန်ဖွင့်',
   empty: 'ဘာမှ မရှိပါ',
@@ -17,6 +17,7 @@ const T = {
   confirmDelete: 'ဒါကို ဖျက်မှာ သေချာလား?',
   delete: 'ဖျက်မယ်',
   pickHour: 'နာရီ ရွေးပါ',
+  repeats: { daily: 'နေ့တိုင်း', weekly: 'အပတ်တိုင်း' },
   // Same words as the bot's times (strings.ts S.periods).
   periods: { morning: 'မနက်', noon: 'နေ့လယ်', evening: 'ညနေ', night: 'ည' },
 };
@@ -129,9 +130,15 @@ function actionButton(item) {
   return [trash];
 }
 
+// "မနက် 9:00 · အပတ်တိုင်း" for a repeating task.
+function timeLine(item) {
+  const time = item.fromEarlierDay ? `${item.day} ${item.time}` : item.time;
+  return item.repeat ? `${time} · ${T.repeats[item.repeat]}` : time;
+}
+
 function card(item) {
   const text = el('div', { className: 'text' }, [
-    el('div', { className: 'time', textContent: item.fromEarlierDay ? `${item.day} ${item.time}` : item.time }),
+    el('div', { className: 'time', textContent: timeLine(item) }),
     el('div', { className: 'title', textContent: item.title }),
   ]);
   const classes = ['card', item.important && 'important', item.done && 'is-done', item.late && 'late'];
@@ -249,6 +256,11 @@ function fillHours() {
   $('form').elements.hour.append(el('option', { value: '', textContent: T.pickHour }), ...options);
 }
 
+function chooseRepeat(repeat) {
+  for (const b of $('repeat-chips').querySelectorAll('button')) b.classList.toggle('active', b.dataset.repeat === repeat);
+  $('form').elements.repeat.value = repeat;
+}
+
 // An edited task can have any minute (e.g. :10); it gets its own button so editing keeps it.
 function chooseMinute(minute) {
   const chips = $('minute-chips');
@@ -285,6 +297,7 @@ function openForm(item = null) {
   const [hour, minute] = item ? item.clock.split(':') : ['', '00'];
   f.hour.value = hour;
   chooseMinute(minute);
+  chooseRepeat(item?.repeat ?? 'none');
   if (item) {
     f.title.value = item.title;
     f.important.checked = item.important;
@@ -308,7 +321,7 @@ async function submitForm(event) {
   const f = $('form').elements;
   if (!f.hour.value) return showFormError(new Error(T.pickHour));
   $('save').disabled = true; // one tap, one task, even on a slow network
-  const fields = { title: f.title.value, date: f.date.value, time: `${f.hour.value}:${f.minute.value}`, important: f.important.checked };
+  const fields = { title: f.title.value, date: f.date.value, time: `${f.hour.value}:${f.minute.value}`, important: f.important.checked, repeat: f.repeat.value };
   try {
     if (state.editing) {
       await api(`/api/items/${state.editing}`, { method: 'PUT', body: JSON.stringify(fields) });
@@ -449,6 +462,10 @@ function wireEvents() {
   $('minute-chips').addEventListener('click', (e) => {
     const minute = e.target.closest('button')?.dataset.minute;
     if (minute) chooseMinute(minute);
+  });
+  $('repeat-chips').addEventListener('click', (e) => {
+    const repeat = e.target.closest('button')?.dataset.repeat;
+    if (repeat) chooseRepeat(repeat);
   });
   $('add').addEventListener('click', () => openForm());
   $('cancel').addEventListener('click', closeForm);

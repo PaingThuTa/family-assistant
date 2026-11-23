@@ -25,7 +25,7 @@ export const S = {
   early: (minutes: number, title: string, time: string) => `${minutes} မိနစ်အကြာ (${time}): ${title}`,
   unanswered: (name: string, title: string, time: string) =>
     `${name} မပြီးသေးပါ (သတိပေးတာ မတုံ့ပြန်ပါ): ${title} - ${time}`,
-  names: { Mom: 'မေမေ', Dad: 'ဖေဖေ', Brother: 'ညီလေး', Admin: 'Admin' } as Record<string, string>,
+  names: { Mom: 'မေမေ', Dad: 'ဖေဖေ', Brother: 'ညီလေး', Admin: 'ကိုကို' } as Record<string, string>,
   done: 'ပြီးပြီ',
   marked: (title: string) => `ပြီးပြီ: ${title}`,
 

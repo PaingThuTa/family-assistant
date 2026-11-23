@@ -7,7 +7,7 @@ import { S } from './strings.ts';
 const NOW = Date.UTC(2026, 10, 20, 3, 0); // 09:30 in Yangon
 const item = (id: number, title: string, dueAt: number): Item => ({
   id, ownerId: 1, createdById: 1, title, dueAt, important: false, status: 'open',
-  pingCount: 0, lastPingedAt: null, earlyPingAt: null,
+  pingCount: 0, lastPingedAt: null, earlyPingAt: null, repeatDays: null,
 });
 
 test('shows the next upcoming task with its Done id', () => {

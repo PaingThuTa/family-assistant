@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GrammyError, HttpError } from 'grammy';
-import { createItem, findItem, findMemberByTelegramId, openDb, syncMembers } from './db.ts';
+import { createItem, findItem, findMemberByTelegramId, listItems, openDb, syncMembers } from './db.ts';
 import { earlyPingFor, pingDue, type PingApi } from './scheduler.ts';
 
 const NOW = 1_000_000_000;
@@ -118,4 +118,34 @@ test('admin is told once when an important item uses up its pings', async () => 
   assert.deepEqual(sent.map(([chat]) => chat), [111, 111, 999]);
   assert.match(sent[2]![1], /^မေမေ မပြီးသေးပါ/);
   assert.ok((await findItem(db, id))?.status === 'open');
+});
+
+const DAY = 24 * 60 * 60_000;
+
+async function setupRepeat(dueAt: number, repeatDays: number) {
+  const db = await openDb(':memory:');
+  await syncMembers(db, [{ name: 'Mom', role: 'member', telegramId: 111 }]);
+  const mom = (await findMemberByTelegramId(db, 111))!;
+  const id = await createItem(db, { ownerId: mom.id, createdById: mom.id, title: 'clean', dueAt, important: false, repeatDays });
+  const api = { sendMessage: async () => ({}) } as unknown as PingApi;
+  const all = () => listItems(db, mom.id, 0, Number.MAX_SAFE_INTEGER, false);
+  return { db, api, id, all };
+}
+
+test('a daily task makes its next one when it comes due, even without Done, and only once', async () => {
+  const { db, api, id, all } = await setupRepeat(NOW, 1);
+  await pingDue(db, api, OPTS, NOW - 1); // not due yet: nothing new
+  assert.equal((await all()).length, 1);
+  await pingDue(db, api, OPTS, NOW);
+  await pingDue(db, api, OPTS, NOW + 30_000);
+  const items = await all();
+  assert.deepEqual(items.map((i) => [i.dueAt, i.repeatDays]), [[NOW, null], [NOW + DAY, 1]]);
+  assert.equal((await findItem(db, id))?.status, 'open'); // the missed one stays as a late task
+  assert.equal(items[1]!.earlyPingAt, NOW + DAY - 10 * 60_000); // the new one gets its heads-up
+});
+
+test('a weekly task skips weeks the bot was down for, straight to the next future week', async () => {
+  const { db, api, all } = await setupRepeat(NOW, 7);
+  await pingDue(db, api, OPTS, NOW + 15 * DAY);
+  assert.deepEqual((await all()).map((i) => i.dueAt), [NOW, NOW + 21 * DAY]);
 });
