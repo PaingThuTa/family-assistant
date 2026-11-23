@@ -18,7 +18,7 @@ import { formatTime } from './time.ts';
 
 export const EARLY_MINUTES = 10;
 
-// Scheduled reminders get a heads-up ping, unless it would already be in the past. Timers never do.
+// Items get a heads-up ping, unless it would already be in the past.
 export const earlyPingFor = (dueAt: number, now: number): number | null => {
   const at = dueAt - EARLY_MINUTES * 60_000;
   return at > now ? at : null;
